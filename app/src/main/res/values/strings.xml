@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Jarvis</string>
+    <string name="jarvis_accessibility_description">Allows Jarvis to perform only the navigation actions you ask for, including Back, Home, Recent Apps and close-app commands.</string>
+</resources>

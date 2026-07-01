@@ -1,0 +1,2 @@
+rootProject.name='Jarvis'
+include ':app'
