@@ -1,0 +1,21 @@
+Jarvis GitHub Actions patch
+===========================
+
+Fixes this GitHub workflow validation error:
+
+  Unrecognized named-value: 'runner'
+  expression: runner.temp
+
+Cause:
+  The workflow used ${{ runner.temp }} in a place GitHub validates before the
+  runner context is available. This makes the workflow invalid before it runs.
+
+Patch contents:
+  .github/workflows/android-build.yml
+
+Apply from the Jarvis project root by unzipping this patch over the project.
+It replaces only the GitHub Actions workflow file.
+
+No Android source files are changed.
+No lambdas are added.
+No AndroidX is added.
