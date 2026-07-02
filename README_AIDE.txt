@@ -122,3 +122,7 @@ Extra test commands:
 
 Note about intelligence:
 This build is still fully local and AIDE-compatible with no external libraries. It can behave more naturally through local rules and can fall back to Google/YouTube searches, but full ChatGPT-style conversation would require adding an online AI API or server backend.
+
+GitHub Actions JDK note
+-----------------------
+The workflow intentionally uses JDK 17 first only for sdkmanager because modern Android command-line tools require JDK 17 or newer. It then switches back to JDK 8 before running Gradle because this AIDE-compatible project uses Android Gradle Plugin 3.5.4 and Gradle 5.6.4.

@@ -10,25 +10,64 @@ on:
 jobs:
   build:
     name: Build Debug APK
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
 
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Set up Java 8
+      # New Android cmdline-tools require JDK 17+ for sdkmanager.
+      # The Jarvis Android project itself still builds with the older Java 8/AGP toolchain below.
+      - name: Set up Java 17 for Android SDK tools
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install required Android SDK packages
+        shell: bash
+        run: |
+          set -e
+          echo "JAVA for sdkmanager:"
+          java -version
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager"
+          fi
+          if [ ! -x "$SDKMANAGER" ]; then
+            echo "Could not find sdkmanager under $ANDROID_HOME/cmdline-tools"
+            find "$ANDROID_HOME/cmdline-tools" -maxdepth 3 -type f -name sdkmanager -print || true
+            exit 1
+          fi
+          echo "Using sdkmanager: $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --install \
+            "platforms;android-29" \
+            "build-tools;29.0.3" \
+            "platform-tools"
+          test -f "$ANDROID_HOME/platforms/android-29/android.jar"
+          test -x "$ANDROID_HOME/build-tools/29.0.3/aapt2"
+
+      # Gradle 5.6.4 / Android Gradle Plugin 3.5.4 are safest under JDK 8.
+      - name: Set up Java 8 for Gradle build
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '8'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install required Android SDK packages
+      - name: Show build environment
+        shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-29" "build-tools;29.0.3" "platform-tools"
+          java -version
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          ls -la "$ANDROID_HOME/platforms/android-29/android.jar"
+          ls -la "$ANDROID_HOME/build-tools/29.0.3"
 
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
