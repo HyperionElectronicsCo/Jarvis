@@ -1,0 +1,175 @@
+name: Android Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version/tag, for example v1.0.0 or 1.0.0"
+        required: true
+        default: "v1.0.0"
+      prerelease:
+        description: "Mark this GitHub Release as a pre-release"
+        required: true
+        type: boolean
+        default: false
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  release:
+    name: Build and publish GitHub Release
+    runs-on: ubuntu-latest
+
+    env:
+      ANDROID_SDK_ROOT: /tmp/jarvis-android-sdk
+      ANDROID_HOME: /tmp/jarvis-android-sdk
+      GRADLE_USER_HOME: /tmp/jarvis-gradle-home
+      TERM: dumb
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+
+      - name: Prepare release details
+        run: |
+          set -euo pipefail
+
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            RAW_TAG="${{ github.event.inputs.version }}"
+            PRERELEASE_INPUT="${{ github.event.inputs.prerelease }}"
+          else
+            RAW_TAG="${GITHUB_REF_NAME}"
+            PRERELEASE_INPUT="false"
+          fi
+
+          RAW_TAG="${RAW_TAG#refs/tags/}"
+          RAW_TAG="${RAW_TAG# }"
+          RAW_TAG="${RAW_TAG% }"
+
+          if [ -z "$RAW_TAG" ]; then
+            echo "Release version is empty." >&2
+            exit 1
+          fi
+
+          case "$RAW_TAG" in
+            v*) TAG="$RAW_TAG" ;;
+            *) TAG="v$RAW_TAG" ;;
+          esac
+
+          APK_NAME="Jarvis-${TAG}-debug.apk"
+
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "APK_NAME=$APK_NAME" >> "$GITHUB_ENV"
+          echo "PRERELEASE_INPUT=$PRERELEASE_INPUT" >> "$GITHUB_ENV"
+
+          echo "Release tag: $TAG"
+          echo "APK asset: $APK_NAME"
+
+      - name: Set up JDK 17 for Android SDK manager
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install clean Android SDK 29
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$ANDROID_SDK_ROOT"
+
+          SDKMANAGER="/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+
+          echo "Using sdkmanager: $SDKMANAGER"
+          java -version
+
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" --licenses >/dev/null || true
+
+          "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" \
+            "platform-tools" \
+            "platforms;android-29" \
+            "build-tools;29.0.3"
+
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+          test -f "$ANDROID_SDK_ROOT/platforms/android-29/android.jar"
+          test -x "$ANDROID_SDK_ROOT/build-tools/29.0.3/aapt2"
+
+      - name: Set up JDK 8 for old Gradle/AGP build
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "8"
+
+      - name: Build debug APK
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew || true
+          ./gradlew clean assembleDebug --stacktrace --no-daemon
+
+      - name: Prepare APK release asset
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          APK_PATH="$(ls app/build/outputs/apk/debug/*.apk | head -n 1)"
+          if [ ! -f "$APK_PATH" ]; then
+            echo "Debug APK was not found." >&2
+            exit 1
+          fi
+
+          cp -f "$APK_PATH" "release/$APK_NAME"
+          sha256sum "release/$APK_NAME" > "release/$APK_NAME.sha256"
+
+          cat > release/RELEASE_NOTES.md <<EOF
+          # Jarvis $TAG
+
+          Android debug APK built automatically by GitHub Actions.
+
+          - Commit: $GITHUB_SHA
+          - Workflow run: $GITHUB_RUN_ID
+          - APK: $APK_NAME
+
+          This is a debug APK for testing the AIDE-compatible Jarvis Android app.
+          EOF
+
+      - name: Upload APK as workflow artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: Jarvis-release-debug-apk
+          path: release/*
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          echo "Publishing release $TAG"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release already exists. Re-uploading APK assets with --clobber."
+            gh release upload "$TAG" "release/$APK_NAME" "release/$APK_NAME.sha256" --clobber
+          else
+            args=(release create "$TAG" "release/$APK_NAME" "release/$APK_NAME.sha256" \
+              --title "Jarvis $TAG" \
+              --notes-file "release/RELEASE_NOTES.md" \
+              --target "$GITHUB_SHA")
+
+            if [ "$PRERELEASE_INPUT" = "true" ]; then
+              args+=(--prerelease)
+            else
+              args+=(--latest)
+            fi
+
+            gh "${args[@]}"
+          fi
