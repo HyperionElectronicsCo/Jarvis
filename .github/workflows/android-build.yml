@@ -13,45 +13,47 @@ jobs:
     runs-on: ubuntu-22.04
 
     env:
-      ANDROID_HOME: /usr/local/lib/android/sdk
-      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      ANDROID_HOME: ${{ runner.temp }}/android-sdk
+      ANDROID_SDK_ROOT: ${{ runner.temp }}/android-sdk
       GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
 
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      # New Android cmdline-tools require JDK 17+ for sdkmanager.
-      # The Jarvis Android project itself still builds with the older Java 8/AGP toolchain below.
+      # sdkmanager from current Android command-line tools requires JDK 17+.
+      # The project itself remains old-AIDE friendly and builds under Java 8 below.
       - name: Set up Java 17 for Android SDK tools
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Install required Android SDK packages
+      - name: Install clean Android SDK 29
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
           echo "JAVA for sdkmanager:"
           java -version
+
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          curl -fsSL "https://dl.google.com/android/repository/commandlinetools-linux-12266719_latest.zip" -o "$RUNNER_TEMP/cmdline-tools.zip"
+          rm -rf "$RUNNER_TEMP/cmdline-tools-unzipped"
+          mkdir -p "$RUNNER_TEMP/cmdline-tools-unzipped"
+          unzip -q "$RUNNER_TEMP/cmdline-tools.zip" -d "$RUNNER_TEMP/cmdline-tools-unzipped"
+          rm -rf "$ANDROID_HOME/cmdline-tools/latest"
+          mv "$RUNNER_TEMP/cmdline-tools-unzipped/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          if [ ! -x "$SDKMANAGER" ]; then
-            SDKMANAGER="$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager"
-          fi
-          if [ ! -x "$SDKMANAGER" ]; then
-            echo "Could not find sdkmanager under $ANDROID_HOME/cmdline-tools"
-            find "$ANDROID_HOME/cmdline-tools" -maxdepth 3 -type f -name sdkmanager -print || true
-            exit 1
-          fi
-          echo "Using sdkmanager: $SDKMANAGER"
-          yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" --install \
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install \
+            "platform-tools" \
             "platforms;android-29" \
-            "build-tools;29.0.3" \
-            "platform-tools"
+            "build-tools;29.0.3"
+
           test -f "$ANDROID_HOME/platforms/android-29/android.jar"
           test -x "$ANDROID_HOME/build-tools/29.0.3/aapt2"
+          printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
 
       # Gradle 5.6.4 / Android Gradle Plugin 3.5.4 are safest under JDK 8.
       - name: Set up Java 8 for Gradle build
@@ -66,6 +68,7 @@ jobs:
           java -version
           echo "ANDROID_HOME=$ANDROID_HOME"
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          cat local.properties
           ls -la "$ANDROID_HOME/platforms/android-29/android.jar"
           ls -la "$ANDROID_HOME/build-tools/29.0.3"
 

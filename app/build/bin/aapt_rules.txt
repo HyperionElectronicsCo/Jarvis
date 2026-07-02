@@ -1,0 +1,12 @@
+# view AndroidManifest.xml #generated:76
+-keep class com.hyperion.jarvis.JarvisAccessibilityService { <init>(...); }
+
+# view AndroidManifest.xml #generated:71
+-keep class com.hyperion.jarvis.JarvisAssistantService { <init>(...); }
+
+# view AndroidManifest.xml #generated:95
+-keep class com.hyperion.jarvis.JarvisBootReceiver { <init>(...); }
+
+# view AndroidManifest.xml #generated:53
+-keep class com.hyperion.jarvis.MainActivity { <init>(...); }
+
