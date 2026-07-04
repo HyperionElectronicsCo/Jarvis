@@ -1,26 +1,30 @@
-# Android / Gradle build output
+# Gradle / Android build output
 .gradle/
 build/
 app/build/
+app/bin/
+app/gen/
+bin/
+gen/
 *.apk
-*.aab
+*.ap_
 *.dex
 *.class
+*.idsig
 
-# Local machine files
-local.properties
-*.log
-*.tmp
-.DS_Store
-Thumbs.db
-
-# Patch/drop-in archives and temporary patch application files
-*.zip
+# Patch leftovers
 patch_files/
 apply_fix.sh
 PATCH_NOTES.txt
 *_NOTES.txt
+*_Patch.zip
+Jarvis_AIDE_v*_Patch.zip
 
-# IDE metadata that should not be uploaded unless deliberately needed
+# Local machine/editor files
+local.properties
+.DS_Store
+*.tmp
+*.log
+*~
 .idea/
 *.iml

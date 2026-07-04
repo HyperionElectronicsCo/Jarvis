@@ -50,6 +50,12 @@
             android:exported="false"
             android:screenOrientation="portrait" />
 
+        <activity
+            android:name=".JarvisYouTubeResolverActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
         <service
             android:name=".JarvisAssistantService"
             android:enabled="true"

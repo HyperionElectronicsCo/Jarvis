@@ -34,6 +34,14 @@ public final class JarvisCommandCenter {
     public static final String ACTION_PAUSE_BACKGROUND = "com.hyperion.jarvis.PAUSE_BACKGROUND";
     public static final String ACTION_RESUME_BACKGROUND = "com.hyperion.jarvis.RESUME_BACKGROUND";
     private static final String PREF_LAST_JOKE_INDEX = "last_joke_index";
+    private static final String OFFICIAL_YOUTUBE_PACKAGE = "com.google.android.youtube";
+    private static final String REVANCED_YOUTUBE_PACKAGE = "app.revanced.android.youtube";
+    private static final String YOUTUBE_MUSIC_PACKAGE = "com.google.android.apps.youtube.music";
+    private static final String SHAZAM_PACKAGE = "com.shazam.android";
+    private static final String SOUNDHOUND_PACKAGE = "com.melodis.midomiMusicIdentifier.freemium";
+    private static final String GOOGLE_APP_PACKAGE = "com.google.android.googlequicksearchbox";
+    private static final String[] YOUTUBE_PACKAGE_PRIORITY = new String[] { OFFICIAL_YOUTUBE_PACKAGE, REVANCED_YOUTUBE_PACKAGE };
+    private static final String[] YOUTUBE_PLAY_PACKAGE_PRIORITY = new String[] { OFFICIAL_YOUTUBE_PACKAGE, REVANCED_YOUTUBE_PACKAGE, YOUTUBE_MUSIC_PACKAGE };
     private static final Random SHARED_RANDOM = new Random();
     private static int launchRequestCounter = 4100;
 
@@ -87,7 +95,7 @@ public final class JarvisCommandCenter {
         String lower = command.toLowerCase(Locale.UK);
 
         if (containsAny(lower, new String[] { "help", "commands", "what can you do" })) {
-            return "You can say okay Jarvis, then ask me to search Google, open AI setup, import keys from clipboard, test AI connection, use a working AI key, ask AI, get weather, set alarms and reminders, remember personal facts, fact check public facts, use camera vision, ask what is this, search products with visual/Lens support, scan QR codes and barcodes, recognise enrolled faces with the upgraded local face engine, navigate somewhere, open installed apps, play music, control volume, control media, go home, go back, show recent apps, close the current app, pause listening, resume listening, or run in the background. I also understand voice variants like A I, API key, Chat G P T and key setup.";
+            return "You can say okay Jarvis, then ask me to search Google, open AI setup, import keys from clipboard, test AI connection, use a working AI key, ask AI, get weather, set alarms and reminders, remember personal facts, fact check public facts, use camera vision, ask what is this, search products with visual/Lens support, scan QR codes and barcodes, recognise enrolled faces with the upgraded local face engine, identify songs through Shazam or SoundHound, resolve and play the first matching YouTube result, navigate somewhere, open installed apps, play music, control volume, control media, go home, go back, show recent apps, close the current app, pause listening, resume listening, or run in the background. I also understand voice variants like A I, API key, Chat G P T and key setup.";
         }
 
         String conversationResponse = handleConversationCommand(context, lower);
@@ -118,6 +126,11 @@ public final class JarvisCommandCenter {
         String visionResponse = handleVisionCommand(context, command, lower, output);
         if (visionResponse != null) {
             return visionResponse;
+        }
+
+        String songRecognitionResponse = handleSongRecognitionCommand(context, lower, output);
+        if (songRecognitionResponse != null) {
+            return songRecognitionResponse;
         }
 
         if (containsAny(lower, new String[] { "who are you", "your name" })) {
@@ -999,27 +1012,145 @@ public final class JarvisCommandCenter {
             return null;
         }
 
+        boolean wantsPlayback = isYouTubePlaybackCommand(lower);
         String query = extractYouTubeAnyQuery(command, lower);
         if (query != null && query.length() > 0) {
+            if (wantsPlayback) {
+                openYouTubeBestMatch(context, query, output);
+                return "Trying to play the best YouTube result for " + query + ".";
+            }
             openYouTubeSearch(context, query, output);
             return "Opening YouTube for " + query + ".";
         }
 
-        if (containsAny(lower, new String[] { "play", "music", "song", "songs", "playlist", "listen" })) {
+        if (wantsPlayback || containsAny(lower, new String[] { "music", "song", "songs", "playlist", "listen" })) {
             query = "random music mix";
-            openYouTubeSearch(context, query, output);
-            return "Opening YouTube for " + query + ".";
+            openYouTubeBestMatch(context, query, output);
+            return "Trying to play the best YouTube result for " + query + ".";
         }
 
         if (containsAny(lower, new String[] { "open", "launch", "start", "run", "load" }) || normalize(lower).equals("youtube")) {
-            String opened = openKnownAppAlias(context, "youtube", output);
+            String opened = openYouTubeApp(context, output);
             if (opened != null) {
-                return "Opening YouTube.";
+                return "Opening " + opened + ".";
             }
-            openYouTubeSearch(context, "YouTube", output);
-            return "Opening YouTube search.";
+            openYouTubeInstallFallback(context, output);
+            return "YouTube is not installed. I opened the app store or Google so you can install it.";
         }
         return null;
+    }
+
+    private static boolean isYouTubePlaybackCommand(String lower) {
+        if (lower == null) {
+            return false;
+        }
+        return containsAny(lower, new String[] { "play ", "play", "listen to", "put on", "start playing", "stream ", "music on youtube", "song on youtube", "songs on youtube" });
+    }
+
+    private static String handleSongRecognitionCommand(Context context, String lower, JarvisOutput output) {
+        if (!isSongRecognitionCommand(lower)) {
+            return null;
+        }
+        if (openSongRecognition(context, output)) {
+            return "Opening song recognition. Let the phone listen to the music now.";
+        }
+        openSongIdentifierInstallFallback(context, output);
+        return "I could not find a song recognition app. I opened the app store or Google so you can install Shazam.";
+    }
+
+    private static boolean isSongRecognitionCommand(String lower) {
+        if (lower == null) {
+            return false;
+        }
+        if (lower.equals("what is this song") || lower.equals("what song is this") || lower.equals("name this song") || lower.equals("recognise song") || lower.equals("recognize song")) {
+            return true;
+        }
+        return containsAny(lower, new String[] {
+                "what is this song",
+                "what song is this",
+                "what music is this",
+                "what tune is this",
+                "what track is this",
+                "name this song",
+                "identify this song",
+                "identify song",
+                "recognise this song",
+                "recognize this song",
+                "recognise song",
+                "recognize song",
+                "song recognition",
+                "music recognition",
+                "open shazam",
+                "shazam this",
+                "shazam song",
+                "listen for song",
+                "detect this song"
+        });
+    }
+
+    private static boolean openSongRecognition(Context context, JarvisOutput output) {
+        if (tryExplicitSongRecognitionAction(context, SHAZAM_PACKAGE, "com.shazam.android.intent.actions.START_TAGGING", "Shazam tagging", output)) {
+            return true;
+        }
+        if (tryExplicitSongRecognitionAction(context, SHAZAM_PACKAGE, "com.shazam.android.action.START_TAGGING", "Shazam tagging", output)) {
+            return true;
+        }
+        if (openFirstPackage(context, new String[] { SHAZAM_PACKAGE }, "Shazam", output) != null) {
+            return true;
+        }
+        if (openFirstPackage(context, new String[] { SOUNDHOUND_PACKAGE }, "SoundHound", output) != null) {
+            return true;
+        }
+        if (tryExplicitSongRecognitionAction(context, GOOGLE_APP_PACKAGE, "com.google.android.googlequicksearchbox.MUSIC_SEARCH", "Google music search", output)) {
+            return true;
+        }
+        try {
+            Intent intent = new Intent(Intent.ACTION_ASSIST);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            if (startActivityCompat(context, intent, output, "assistant song recognition")) {
+                return true;
+            }
+        } catch (Exception error) {
+            log(output, "SONG: Assistant fallback failed: " + error.getMessage());
+        }
+        return false;
+    }
+
+    private static boolean tryExplicitSongRecognitionAction(Context context, String packageName, String action, String label, JarvisOutput output) {
+        try {
+            Intent intent = new Intent(action);
+            intent.setPackage(packageName);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            return startActivityCompat(context, intent, output, label);
+        } catch (Exception error) {
+            log(output, "SONG: " + label + " failed: " + error.getMessage());
+            return false;
+        }
+    }
+
+    private static void openSongIdentifierInstallFallback(Context context, JarvisOutput output) {
+        try {
+            Uri marketUri = Uri.parse("market://details?id=" + SHAZAM_PACKAGE);
+            Intent intent = new Intent(Intent.ACTION_VIEW, marketUri);
+            intent.setPackage("com.android.vending");
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            if (startActivityCompat(context, intent, output, "Shazam Play Store")) {
+                return;
+            }
+        } catch (Exception marketError) {
+            log(output, "SONG: Play Store fallback failed: " + marketError.getMessage());
+        }
+        try {
+            Uri webStoreUri = Uri.parse("https://play.google.com/store/apps/details?id=" + SHAZAM_PACKAGE);
+            Intent intent = new Intent(Intent.ACTION_VIEW, webStoreUri);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            if (startActivityCompat(context, intent, output, "Shazam web store")) {
+                return;
+            }
+        } catch (Exception webStoreError) {
+            log(output, "SONG: web store fallback failed: " + webStoreError.getMessage());
+        }
+        openWebSearch(context, "install Shazam Android song recognition", output);
     }
 
     private static String handlePlatformPlayCommand(Context context, String command, String lower, JarvisOutput output) {
@@ -1229,6 +1360,67 @@ public final class JarvisCommandCenter {
         return result;
     }
 
+    private static void openYouTubeBestMatch(Context context, String query, JarvisOutput output) {
+        if (query == null || query.trim().length() == 0) {
+            query = "random music mix";
+        }
+        query = cleanYouTubeQuery(query);
+        if (query.length() == 0) {
+            query = "random music mix";
+        }
+
+        if (openYouTubeResolver(context, query, true, output)) {
+            return;
+        }
+
+        openYouTubeSearch(context, query, output);
+    }
+
+    private static boolean openYouTubeResolver(Context context, String query, boolean autoPlay, JarvisOutput output) {
+        if (context == null) {
+            return false;
+        }
+        try {
+            Intent intent = new Intent(context, JarvisYouTubeResolverActivity.class);
+            intent.putExtra(JarvisYouTubeResolverActivity.EXTRA_QUERY, query);
+            intent.putExtra(JarvisYouTubeResolverActivity.EXTRA_AUTO_PLAY, autoPlay);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            return startActivityCompat(context, intent, output, "Jarvis YouTube resolver");
+        } catch (Exception error) {
+            log(output, "YOUTUBE: resolver failed: " + error.getMessage());
+            return false;
+        }
+    }
+
+    private static boolean openYouTubeMediaPlaySearchWithPackage(Context context, String query, String packageName, JarvisOutput output) {
+        try {
+            Intent intent = new Intent("android.media.action.MEDIA_PLAY_FROM_SEARCH");
+            intent.setPackage(packageName);
+            intent.putExtra(SearchManager.QUERY, query);
+            intent.putExtra("android.intent.extra.title", query);
+            intent.putExtra("android.intent.extra.focus", "vnd.android.cursor.item/audio");
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            if (startActivityCompat(context, intent, output, "YouTube best-result playback " + packageName)) {
+                return true;
+            }
+        } catch (Exception first) {
+            log(output, "YOUTUBE: media play from search failed for " + packageName + ": " + first.getMessage());
+        }
+
+        try {
+            Uri uri = Uri.parse("vnd.youtube://results?search_query=" + Uri.encode(query));
+            Intent intent = new Intent(Intent.ACTION_VIEW, uri);
+            intent.setPackage(packageName);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            if (startActivityCompat(context, intent, output, "YouTube app results " + packageName)) {
+                return true;
+            }
+        } catch (Exception second) {
+            log(output, "YOUTUBE: vnd.youtube fallback failed for " + packageName + ": " + second.getMessage());
+        }
+        return false;
+    }
+
     private static void openYouTubeSearch(Context context, String query, JarvisOutput output) {
         if (query == null || query.trim().length() == 0) {
             query = "random music mix";
@@ -1237,35 +1429,90 @@ public final class JarvisCommandCenter {
         if (query.length() == 0) {
             query = "random music mix";
         }
-        try {
-            Intent intent = new Intent(Intent.ACTION_SEARCH);
-            intent.setPackage("com.google.android.youtube");
-            intent.putExtra(SearchManager.QUERY, query);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            if (startActivityCompat(context, intent, output, "YouTube search")) {
+
+        for (int i = 0; i < YOUTUBE_PACKAGE_PRIORITY.length; i++) {
+            if (openYouTubeSearchWithPackage(context, query, YOUTUBE_PACKAGE_PRIORITY[i], output)) {
                 return;
             }
-        } catch (Exception first) {
-            log(output, "YOUTUBE: ACTION_SEARCH failed: " + first.getMessage());
         }
-        try {
-            Uri uri = Uri.parse("https://www.youtube.com/results?search_query=" + Uri.encode(query));
-            Intent intent = new Intent(Intent.ACTION_VIEW, uri);
-            intent.setPackage("com.google.android.youtube");
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            if (startActivityCompat(context, intent, output, "YouTube app search")) {
-                return;
-            }
-        } catch (Exception second) {
-            log(output, "YOUTUBE: app URL failed: " + second.getMessage());
-        }
+
         try {
             Uri uri = Uri.parse("https://www.youtube.com/results?search_query=" + Uri.encode(query));
             Intent intent = new Intent(Intent.ACTION_VIEW, uri);
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            startActivityCompat(context, intent, output, "YouTube browser search");
+            if (startActivityCompat(context, intent, output, "YouTube browser search")) {
+                return;
+            }
         } catch (Exception third) {
             log(output, "YOUTUBE: browser fallback failed: " + third.getMessage());
+        }
+        openWebSearch(context, "YouTube " + query, output);
+    }
+
+    private static boolean openYouTubeSearchWithPackage(Context context, String query, String packageName, JarvisOutput output) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_SEARCH);
+            intent.setPackage(packageName);
+            intent.putExtra(SearchManager.QUERY, query);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            if (startActivityCompat(context, intent, output, "YouTube search " + packageName)) {
+                return true;
+            }
+        } catch (Exception first) {
+            log(output, "YOUTUBE: ACTION_SEARCH failed for " + packageName + ": " + first.getMessage());
+        }
+        try {
+            Uri uri = Uri.parse("https://www.youtube.com/results?search_query=" + Uri.encode(query));
+            Intent intent = new Intent(Intent.ACTION_VIEW, uri);
+            intent.setPackage(packageName);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            if (startActivityCompat(context, intent, output, "YouTube app search " + packageName)) {
+                return true;
+            }
+        } catch (Exception second) {
+            log(output, "YOUTUBE: app URL failed for " + packageName + ": " + second.getMessage());
+        }
+        return false;
+    }
+
+    private static String openYouTubeApp(Context context, JarvisOutput output) {
+        return openFirstPackage(context, YOUTUBE_PACKAGE_PRIORITY, "YouTube", output);
+    }
+
+    private static void openYouTubeInstallFallback(Context context, JarvisOutput output) {
+        try {
+            Uri marketUri = Uri.parse("market://details?id=" + OFFICIAL_YOUTUBE_PACKAGE);
+            Intent intent = new Intent(Intent.ACTION_VIEW, marketUri);
+            intent.setPackage("com.android.vending");
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            if (startActivityCompat(context, intent, output, "YouTube Play Store")) {
+                return;
+            }
+        } catch (Exception marketError) {
+            log(output, "YOUTUBE: Play Store fallback failed: " + marketError.getMessage());
+        }
+        try {
+            Uri webStoreUri = Uri.parse("https://play.google.com/store/apps/details?id=" + OFFICIAL_YOUTUBE_PACKAGE);
+            Intent intent = new Intent(Intent.ACTION_VIEW, webStoreUri);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            if (startActivityCompat(context, intent, output, "YouTube web store")) {
+                return;
+            }
+        } catch (Exception webStoreError) {
+            log(output, "YOUTUBE: web store fallback failed: " + webStoreError.getMessage());
+        }
+        openWebSearch(context, "install YouTube Android app", output);
+    }
+
+    private static boolean isPackageInstalled(Context context, String packageName) {
+        if (context == null || packageName == null || packageName.length() == 0) {
+            return false;
+        }
+        try {
+            PackageManager packageManager = context.getPackageManager();
+            return packageManager.getLaunchIntentForPackage(packageName) != null;
+        } catch (Exception ignored) {
+            return false;
         }
     }
 
@@ -1584,7 +1831,12 @@ public final class JarvisCommandCenter {
             return "Bluetooth settings";
         }
         if (lowerApp.equals("youtube") || lowerApp.equals("yt")) {
-            return openFirstPackage(context, new String[] { "com.google.android.youtube" }, "YouTube", output);
+            String opened = openYouTubeApp(context, output);
+            if (opened != null) {
+                return opened;
+            }
+            openYouTubeInstallFallback(context, output);
+            return "YouTube install page";
         }
         if (lowerApp.equals("maps") || lowerApp.equals("googlemaps")) {
             return openFirstPackage(context, new String[] { "com.google.android.apps.maps" }, "Google Maps", output);
@@ -1686,8 +1938,12 @@ public final class JarvisCommandCenter {
                 Intent launchIntent = packageManager.getLaunchIntentForPackage(packageNames[i]);
                 if (launchIntent != null) {
                     launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    startActivityCompat(context, launchIntent, output, "app launch");
-                    return friendlyName;
+                    if (startActivityCompat(context, launchIntent, output, "app launch")) {
+                        if (REVANCED_YOUTUBE_PACKAGE.equals(packageNames[i])) {
+                            return "YouTube ReVanced";
+                        }
+                        return friendlyName;
+                    }
                 }
             } catch (Exception error) {
                 log(output, "APP: Alias launch failed for " + packageNames[i] + ": " + error.getMessage());
@@ -1842,6 +2098,10 @@ public final class JarvisCommandCenter {
         result = result.replace("chat g p t", "chatgpt");
         result = result.replace("chat gpt", "chatgpt");
         result = result.replace("clip board", "clipboard");
+        result = result.replace("you tube", "youtube");
+        result = result.replace("u tube", "youtube");
+        result = result.replace("shazzam", "shazam");
+        result = result.replace("shazam this song", "shazam this song");
         return result.trim();
     }
 

@@ -482,6 +482,53 @@ Jarvis now includes an upgraded AIDE-friendly vision layer:
 The build remains Java-only, AIDE-compatible, no lambdas, no AndroidX, and no bundled external ML dependencies. For exact product matching and QR/barcode decoding, Jarvis will use Google Lens or a ZXing-compatible scanner app when installed.
 
 
-## v19 Joke Engine Upgrade
+## v20 Joke Engine Upgrade
 
 Jarvis now includes a larger local joke bank and remembers the last joke it told, so commands like `okay Jarvis tell me a joke`, `another joke`, and `make me laugh` rotate through different responses instead of repeating the same line over and over.
+
+
+### YouTube launch priority
+
+Jarvis now opens YouTube using this order:
+
+1. Official YouTube: `com.google.android.youtube`
+2. ReVanced YouTube: `app.revanced.android.youtube`
+3. Google Play Store / Google search fallback if neither package is installed
+
+Example commands:
+
+```text
+okay Jarvis open YouTube
+okay Jarvis play drum and bass on YouTube
+okay Jarvis open YouTube for Android development
+```
+
+
+### v1.21 YouTube Playback + Song Recognition
+
+New commands:
+
+```text
+okay Jarvis play Bohemian Rhapsody on YouTube
+okay Jarvis play drum and bass on YouTube
+okay Jarvis listen to 90s hip hop on YouTube
+okay Jarvis what is this song
+okay Jarvis identify this song
+okay Jarvis open Shazam
+```
+
+Jarvis now tries a media-play-from-search intent first so YouTube/YouTube ReVanced/YouTube Music can play the closest matching result when Android and the installed app support it. If direct playback is not supported on that device, Jarvis falls back to opening the YouTube app search result.
+
+Song recognition uses installed recogniser apps first: Shazam, then SoundHound, then Google/Assistant fallbacks, then the app store if no recogniser is available.
+
+### v22 YouTube first-result playback
+
+Jarvis now handles commands such as:
+
+```text
+okay Jarvis play dubstep on YouTube
+okay Jarvis play Linkin Park Numb on YouTube
+okay Jarvis listen to 90s hip hop on YouTube
+```
+
+Instead of only opening the YouTube app, Jarvis attempts to resolve the first matching YouTube video and open that video directly in the official YouTube app, ReVanced, YouTube Music, or the browser as a fallback.
