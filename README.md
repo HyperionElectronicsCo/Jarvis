@@ -381,3 +381,107 @@ The goal is to build a practical Android-based J.A.R.V.I.S-style mobile assistan
 ## Disclaimer
 
 This project is a fan-made Android assistant interface inspired by futuristic cinematic AI assistants. It is not affiliated with Marvel, Disney, Iron Man, or any official J.A.R.V.I.S product.
+
+---
+
+## v1.13 Intelligence Expansion
+
+This build adds a larger local assistant layer while staying AIDE-friendly, Java-only, no lambdas, no AndroidX, and no external app dependencies.
+
+### New commands
+
+```text
+okay Jarvis weather in London
+okay Jarvis remind me to check the oven in 10 minutes
+okay Jarvis set alarm for 7:30
+okay Jarvis show reminders
+okay Jarvis remember that my favourite colour is blue
+okay Jarvis what do you remember
+okay Jarvis fact check the Moon orbits the Earth
+okay Jarvis set ai key YOUR_API_KEY
+okay Jarvis set ai model gpt-4o-mini
+okay Jarvis ask AI explain Android services
+okay Jarvis camera vision
+okay Jarvis recognise face
+okay Jarvis remember face as Jacob
+```
+
+### Added features
+
+- Local personal fact memory using SharedPreferences.
+- Public fact-check workflow using a Wikipedia source lookup, with Google fallback for manual verification.
+- Weather by place using Open-Meteo, no API key required.
+- Local alarms and reminders using Android AlarmManager and notifications.
+- Expanded media/music control.
+- Optional OpenAI-compatible chat endpoint integration through a locally stored API key.
+- Camera vision activity for face detection and scene/colour analysis.
+- Lightweight local face enrolment and recognition prototype using Android's built-in FaceDetector and simple image signatures.
+
+### Notes
+
+Camera vision and face recognition are deliberately local and dependency-free. This means they are lightweight and AIDE-compatible, but they are not as accurate as a full ML Kit, TensorFlow Lite, or cloud vision model.
+
+
+## Local AI Key Vault
+
+Jarvis supports Chat AI through a locally stored OpenAI-compatible API key. For safety, API keys are **not hardcoded** into the APK or repository. Add keys on-device instead:
+
+```text
+set ai key YOUR_API_KEY
+add ai key YOUR_API_KEY
+import ai keys from clipboard
+ai key status
+use ai key 2
+clear ai keys
+```
+
+The app masks key commands in the console and only shows the last four characters of the active key in status output.
+
+
+## v15 AI Setup & Local Key Vault
+
+Jarvis now includes an on-device AI setup screen so API keys can be imported locally without committing them to GitHub or embedding them in the APK source.
+
+Commands:
+
+```text
+okay Jarvis open AI setup
+okay Jarvis import AI keys from clipboard
+okay Jarvis append AI keys from clipboard
+okay Jarvis test AI connection
+okay Jarvis use working AI key
+okay Jarvis are AI keys saved
+okay Jarvis AI key status
+okay Jarvis clear AI keys
+```
+
+Keys are stored in Jarvis app data and should survive normal app restarts, phone restarts, and APK updates. They are removed if Jarvis is uninstalled, app data is cleared, the package name changes, or `clear AI keys` is used.
+
+
+## v18 Vision Upgrade
+
+Jarvis now includes an upgraded AIDE-friendly vision layer:
+
+- Advanced local facial recognition using a 128-value face embedding rather than the original simple colour histogram prototype.
+- Multiple face samples can be enrolled for the same person for stronger matching.
+- Face status and clearing commands:
+  - `okay Jarvis known faces`
+  - `okay Jarvis facial recognition status`
+  - `okay Jarvis clear face memory`
+- Product and visual search commands:
+  - `okay Jarvis what is this`
+  - `okay Jarvis what product is this`
+  - `okay Jarvis identify this product`
+  - `okay Jarvis product search`
+  - `okay Jarvis open Google Lens`
+- QR and barcode scanning commands:
+  - `okay Jarvis scan QR code`
+  - `okay Jarvis scan barcode`
+  - `okay Jarvis read QR code`
+
+The build remains Java-only, AIDE-compatible, no lambdas, no AndroidX, and no bundled external ML dependencies. For exact product matching and QR/barcode decoding, Jarvis will use Google Lens or a ZXing-compatible scanner app when installed.
+
+
+## v19 Joke Engine Upgrade
+
+Jarvis now includes a larger local joke bank and remembers the last joke it told, so commands like `okay Jarvis tell me a joke`, `another joke`, and `make me laugh` rotate through different responses instead of repeating the same line over and over.

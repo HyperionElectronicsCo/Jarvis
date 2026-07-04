@@ -92,7 +92,7 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
         textToSpeech = new TextToSpeech(this, this);
         appendConsole("BOOT: Native Android Jarvis shell loaded.");
         appendConsole("BOOT: Say OKAY JARVIS, tap LISTEN, or type a command.");
-        appendConsole("BOOT: Commands now include search, maps, apps, media, volume, navigation control and background service.");
+        appendConsole("BOOT: Commands now include search, weather, reminders, memory, AI chat, camera vision, apps, media, volume, navigation control and background service.");
         startClock();
         updateMuteButton();
         updateBackgroundButton();
@@ -156,7 +156,7 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
         overlay.addView(visualSpacer, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0f));
 
         transcriptView = new TextView(this);
-        transcriptView.setText("Say: okay Jarvis play drum and bass on YouTube, open YouTube for drum and bass, tell me a joke, thanks, go back, homescreen, or stop listening.");
+        transcriptView.setText("Say: open AI setup, import keys from clipboard, test AI connection, use working key, are keys saved, weather in London, remind me in 10 minutes, remember that my favourite colour is blue, ask AI, camera vision, or okay Jarvis open YouTube.");
         transcriptView.setTextColor(Color.argb(230, 210, 250, 255));
         transcriptView.setTextSize(14);
         transcriptView.setGravity(Gravity.CENTER);
@@ -587,7 +587,7 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
             return;
         }
         transcriptView.setText(command);
-        appendConsole("USER: " + command);
+        appendConsole("USER: " + maskSensitiveConsoleCommand(command));
 
         if (JarvisCommandCenter.containsWakePhrase(command)) {
             String afterWake = JarvisCommandCenter.stripWakePhrase(command);
@@ -622,6 +622,21 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
     private boolean looksLikeBackgroundStart(String command) {
         String lower = command.toLowerCase(Locale.UK);
         return lower.indexOf("background") >= 0 && (lower.indexOf("enable") >= 0 || lower.indexOf("start") >= 0 || lower.indexOf("on") >= 0 || lower.indexOf("listen") >= 0 || lower.indexOf("run") >= 0);
+    }
+
+    private String maskSensitiveConsoleCommand(String command) {
+        if (command == null) {
+            return "";
+        }
+        String lower = command.toLowerCase(Locale.UK).trim();
+        lower = lower.replace("a i", "ai").replace("a p i", "api").replace("clip board", "clipboard");
+        if (lower.startsWith("set ai key ") || lower.startsWith("set api key ") || lower.startsWith("set openai key ") || lower.startsWith("set open ai key ") || lower.startsWith("set chatgpt key ")
+                || lower.startsWith("set ai keys ") || lower.startsWith("set api keys ") || lower.startsWith("set openai keys ") || lower.startsWith("set open ai keys ") || lower.startsWith("set chatgpt keys ")
+                || lower.startsWith("add ai key ") || lower.startsWith("add api key ") || lower.startsWith("add openai key ") || lower.startsWith("add open ai key ") || lower.startsWith("add chatgpt key ")
+                || lower.startsWith("import ai keys") || lower.startsWith("import keys") || lower.startsWith("append ai keys") || lower.startsWith("append keys")) {
+            return "AI key command ********";
+        }
+        return command;
     }
 
     private String recognitionErrorToText(int error) {
@@ -891,6 +906,16 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
 
     public void onBackgroundStateChanged(boolean enabled) {
         updateBackgroundButton();
+    }
+
+    public void onAsyncResponse(final String text) {
+        runOnUiThread(new Runnable() {
+            public void run() {
+                if (text != null && text.length() > 0) {
+                    speak(text);
+                }
+            }
+        });
     }
 
     protected void onDestroy() {

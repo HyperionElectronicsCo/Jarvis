@@ -1,5 +1,0 @@
-Jarvis v12 build fix notes:
-- AndroidManifest.xml now includes package="com.hyperion.jarvis" for AGP 3.5.4.
-- GitHub Actions now installs a clean isolated Android SDK 29 into RUNNER_TEMP.
-- This avoids old Android Gradle Plugin 3.5.4 parsing newer preinstalled SDK preview packages such as 34x.
-- sdkmanager is run under JDK 17, then Gradle is run under JDK 8 for AIDE-era compatibility.

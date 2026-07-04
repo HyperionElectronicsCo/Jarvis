@@ -6,4 +6,5 @@ public interface JarvisOutput {
     void onMuteChanged(boolean muted);
     void onStopListeningRequested();
     void onBackgroundStateChanged(boolean enabled);
+    void onAsyncResponse(String text);
 }

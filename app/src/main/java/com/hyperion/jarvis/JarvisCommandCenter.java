@@ -3,6 +3,8 @@ package com.hyperion.jarvis;
 import android.app.PendingIntent;
 import android.app.SearchManager;
 import android.app.Service;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -31,6 +33,8 @@ public final class JarvisCommandCenter {
     public static final String ACTION_STOP_BACKGROUND = "com.hyperion.jarvis.STOP_BACKGROUND";
     public static final String ACTION_PAUSE_BACKGROUND = "com.hyperion.jarvis.PAUSE_BACKGROUND";
     public static final String ACTION_RESUME_BACKGROUND = "com.hyperion.jarvis.RESUME_BACKGROUND";
+    private static final String PREF_LAST_JOKE_INDEX = "last_joke_index";
+    private static final Random SHARED_RANDOM = new Random();
     private static int launchRequestCounter = 4100;
 
     private JarvisCommandCenter() {
@@ -75,16 +79,45 @@ public final class JarvisCommandCenter {
         if (command.length() == 0) {
             return "At your service.";
         }
+        command = normalizeSpokenCommandText(command).trim();
+        if (command.length() == 0) {
+            return "At your service.";
+        }
 
         String lower = command.toLowerCase(Locale.UK);
 
         if (containsAny(lower, new String[] { "help", "commands", "what can you do" })) {
-            return "You can say okay Jarvis, then ask me to search Google, navigate somewhere, open nearly any installed app, play drum and bass on YouTube, tell a joke, change media volume, control music, read battery, show time, open settings, go home, go back, show recent apps, close the current app, pause listening, resume listening, or run in the background.";
+            return "You can say okay Jarvis, then ask me to search Google, open AI setup, import keys from clipboard, test AI connection, use a working AI key, ask AI, get weather, set alarms and reminders, remember personal facts, fact check public facts, use camera vision, ask what is this, search products with visual/Lens support, scan QR codes and barcodes, recognise enrolled faces with the upgraded local face engine, navigate somewhere, open installed apps, play music, control volume, control media, go home, go back, show recent apps, close the current app, pause listening, resume listening, or run in the background. I also understand voice variants like A I, API key, Chat G P T and key setup.";
         }
 
-        String conversationResponse = handleConversationCommand(lower);
+        String conversationResponse = handleConversationCommand(context, lower);
         if (conversationResponse != null) {
             return conversationResponse;
+        }
+
+        String memoryResponse = handleMemoryCommand(context, command, lower, output);
+        if (memoryResponse != null) {
+            return memoryResponse;
+        }
+
+        String weatherResponse = handleWeatherCommand(context, command, lower, output);
+        if (weatherResponse != null) {
+            return weatherResponse;
+        }
+
+        String reminderResponse = JarvisReminderManager.handleReminderCommand(context, command, lower, output);
+        if (reminderResponse != null) {
+            return reminderResponse;
+        }
+
+        String aiResponse = handleAICommand(context, command, lower, output);
+        if (aiResponse != null) {
+            return aiResponse;
+        }
+
+        String visionResponse = handleVisionCommand(context, command, lower, output);
+        if (visionResponse != null) {
+            return visionResponse;
         }
 
         if (containsAny(lower, new String[] { "who are you", "your name" })) {
@@ -241,6 +274,10 @@ public final class JarvisCommandCenter {
         }
 
         if (isQuestion(lower)) {
+            if (JarvisOnlineBrain.hasApiKey(context)) {
+                JarvisOnlineBrain.requestChat(context, command, output);
+                return "Asking the AI core.";
+            }
             openWebSearch(context, command, output);
             return "I will search Google for that.";
         }
@@ -387,6 +424,304 @@ public final class JarvisCommandCenter {
         }
     }
 
+
+    private static String handleMemoryCommand(Context context, String command, String lower, JarvisOutput output) {
+        String fact = null;
+        String[] rememberMarkers = new String[] { "remember that ", "remember this ", "learn that ", "learn this ", "store fact that ", "store this fact " };
+        for (int i = 0; i < rememberMarkers.length; i++) {
+            int index = lower.indexOf(rememberMarkers[i]);
+            if (index >= 0) {
+                fact = command.substring(index + rememberMarkers[i].length()).trim();
+                break;
+            }
+        }
+        if (fact != null) {
+            fact = cleanTrailingPoliteWords(fact);
+            if (fact.length() == 0) {
+                return "Tell me what fact you want me to remember.";
+            }
+            if (JarvisMemoryStore.isPersonalFact(fact)) {
+                return JarvisMemoryStore.savePersonalFact(context, fact);
+            }
+            JarvisOnlineBrain.requestFactCheckAndStore(context, fact, output);
+            return "I will fact check that against a reliable public source before storing it.";
+        }
+        if (containsAny(lower, new String[] { "what do you remember", "list facts", "recall facts", "stored facts", "what have you learned", "memory list" })) {
+            return JarvisMemoryStore.listFacts(context);
+        }
+        String recall = null;
+        String[] recallMarkers = new String[] { "what do you remember about ", "recall ", "search memory for ", "what did i tell you about " };
+        for (int r = 0; r < recallMarkers.length; r++) {
+            int index = lower.indexOf(recallMarkers[r]);
+            if (index >= 0) {
+                recall = command.substring(index + recallMarkers[r].length()).trim();
+                break;
+            }
+        }
+        if (recall != null && recall.length() > 0) {
+            return JarvisMemoryStore.findFacts(context, recall);
+        }
+        String forget = null;
+        String[] forgetMarkers = new String[] { "forget that ", "forget fact ", "forget memory ", "delete memory ", "remove memory " };
+        for (int f = 0; f < forgetMarkers.length; f++) {
+            int index = lower.indexOf(forgetMarkers[f]);
+            if (index >= 0) {
+                forget = command.substring(index + forgetMarkers[f].length()).trim();
+                break;
+            }
+        }
+        if (forget != null) {
+            return JarvisMemoryStore.forgetFactsMatching(context, forget);
+        }
+        if (lower.startsWith("fact check ") || lower.startsWith("check fact ") || lower.startsWith("verify fact ")) {
+            String publicFact = command.substring(command.indexOf(' ') + 1).trim();
+            if (publicFact.toLowerCase(Locale.UK).startsWith("fact ")) {
+                publicFact = publicFact.substring(5).trim();
+            }
+            JarvisOnlineBrain.requestFactCheckAndStore(context, publicFact, output);
+            return "Checking that fact now.";
+        }
+        return null;
+    }
+
+    private static String handleWeatherCommand(Context context, String command, String lower, JarvisOutput output) {
+        if (!containsAny(lower, new String[] { "weather", "temperature", "forecast", "rain today", "raining" })) {
+            return null;
+        }
+        String location = extractWeatherLocation(command, lower);
+        JarvisOnlineBrain.requestWeather(context, location, output);
+        if (location.length() == 0) {
+            return "Tell me a place for weather, for example: weather in London.";
+        }
+        return "Checking the weather for " + location + ".";
+    }
+
+    private static String extractWeatherLocation(String command, String lower) {
+        String[] markers = new String[] { "weather in ", "weather for ", "forecast in ", "forecast for ", "temperature in ", "temperature for ", "is it raining in ", "will it rain in " };
+        for (int i = 0; i < markers.length; i++) {
+            int index = lower.indexOf(markers[i]);
+            if (index >= 0) {
+                return cleanTrailingPoliteWords(command.substring(index + markers[i].length()).trim());
+            }
+        }
+        return "";
+    }
+
+    private static String handleAICommand(Context context, String command, String lower, JarvisOutput output) {
+        if (containsAny(lower, new String[] { "ai command test", "jarvis command test", "v16 command test", "ai router test" })) {
+            return "Jarvis command router v16 is active. AI setup, key import, key testing and persistence commands are online.";
+        }
+
+        if (containsAny(lower, new String[] { "open ai setup", "open the ai setup", "ai setup", "setup ai", "set up ai", "setup chat ai", "set up chat ai", "open chat ai setup", "open openai setup", "open open ai setup", "open api setup", "api setup", "open key setup", "key setup", "ai key setup", "open ai key setup", "open ai settings", "ai settings", "chatgpt setup", "chat gpt setup", "chat setup", "open chat setup", "open setup screen", "open setup" })) {
+            openAISetupActivity(context, output);
+            return "Opening AI setup. You can import keys from the clipboard, test them, choose the first working key, and confirm they are stored locally.";
+        }
+
+        if (containsAny(lower, new String[] { "are ai keys saved", "are keys saved", "are my keys saved", "will ai keys save", "will keys save", "will ai keys remember", "will you remember ai keys", "ai key persistence", "key persistence", "are keys stored forever", "do i need to set ai keys again", "do i need to set keys again", "will jarvis remember keys" })) {
+            return JarvisOnlineBrain.getApiKeyPersistenceStatus(context);
+        }
+
+        if (containsAny(lower, new String[] { "test ai connection", "test connection", "test ai key", "test key", "test api key", "test openai key", "test open ai key", "check ai key", "check api key", "check key", "check openai key", "check open ai key" })) {
+            JarvisOnlineBrain.testActiveApiKey(context, output);
+            return "Testing the active AI key now.";
+        }
+
+        if (containsAny(lower, new String[] { "use working ai key", "use working key", "find working ai key", "find working key", "select working ai key", "select working key", "test all ai keys", "test all keys", "use first working key", "find first working key", "find first working ai key" })) {
+            JarvisOnlineBrain.selectFirstWorkingApiKey(context, output);
+            return "Testing stored AI keys and selecting the first working one.";
+        }
+
+        if (lower.startsWith("clear ai keys") || lower.startsWith("clear keys") || lower.startsWith("delete ai keys") || lower.startsWith("delete keys") || lower.startsWith("forget ai keys") || lower.startsWith("forget keys") || lower.startsWith("remove ai keys") || lower.startsWith("remove keys")) {
+            JarvisOnlineBrain.clearApiKeys(context);
+            return "All locally stored AI keys have been removed from this device.";
+        }
+
+        if (lower.startsWith("import ai keys from clipboard") || lower.startsWith("import keys from clipboard") || lower.startsWith("import api keys from clipboard") || lower.startsWith("import openai keys from clipboard") || lower.startsWith("import open ai keys from clipboard") || lower.startsWith("import chatgpt keys from clipboard") || lower.startsWith("paste ai keys from clipboard") || lower.startsWith("paste keys from clipboard") || lower.startsWith("clipboard import keys")) {
+            String clipboardText = getClipboardText(context);
+            if (clipboardText.length() == 0) {
+                if (context instanceof Service) {
+                    openAISetupActivity(context, output);
+                    return "Android may block clipboard access from the background. I opened AI setup; press Import Keys From Clipboard there.";
+                }
+                return "Clipboard is empty. Copy your key list first, then type: import keys from clipboard.";
+            }
+            int count = JarvisOnlineBrain.setApiKeysFromText(context, clipboardText, false);
+            if (count == 0) {
+                return "I could not find any usable OpenAI-style keys in the clipboard.";
+            }
+            return "Imported " + count + " AI key" + (count == 1 ? "" : "s") + " from the clipboard and stored them locally on this device.";
+        }
+
+        if (lower.startsWith("append ai keys from clipboard") || lower.startsWith("append keys from clipboard") || lower.startsWith("add ai keys from clipboard") || lower.startsWith("add keys from clipboard") || lower.startsWith("append api keys from clipboard") || lower.startsWith("add api keys from clipboard")) {
+            String clipboardText = getClipboardText(context);
+            if (clipboardText.length() == 0) {
+                if (context instanceof Service) {
+                    openAISetupActivity(context, output);
+                    return "Android may block clipboard access from the background. I opened AI setup; press Append Keys From Clipboard there.";
+                }
+                return "Clipboard is empty. Copy your key list first, then type: append keys from clipboard.";
+            }
+            int count = JarvisOnlineBrain.setApiKeysFromText(context, clipboardText, true);
+            if (count == 0) {
+                return "I could not find any usable OpenAI-style keys in the clipboard.";
+            }
+            return "AI key vault now contains " + count + " local key" + (count == 1 ? "" : "s") + ".";
+        }
+
+        if (lower.startsWith("set ai keys ") || lower.startsWith("set api keys ") || lower.startsWith("set openai keys ") || lower.startsWith("set open ai keys ") || lower.startsWith("set chatgpt keys ")) {
+            String keysText = extractAfterPrefix(command, lower, new String[] { "set ai keys ", "set api keys ", "set openai keys ", "set open ai keys ", "set chatgpt keys " });
+            int count = JarvisOnlineBrain.setApiKeysFromText(context, keysText, false);
+            if (count == 0) {
+                return "I could not find any usable OpenAI-style keys in that text.";
+            }
+            return "Stored " + count + " AI key" + (count == 1 ? "" : "s") + " locally on this device.";
+        }
+
+        if (lower.startsWith("add ai key ") || lower.startsWith("add api key ") || lower.startsWith("add openai key ") || lower.startsWith("add open ai key ") || lower.startsWith("add chatgpt key ")) {
+            String keyText = extractAfterPrefix(command, lower, new String[] { "add ai key ", "add api key ", "add openai key ", "add open ai key ", "add chatgpt key " });
+            int count = JarvisOnlineBrain.setApiKeysFromText(context, keyText, true);
+            if (count == 0) {
+                return "I could not find a usable OpenAI-style key in that text.";
+            }
+            return "AI key added. " + JarvisOnlineBrain.getApiKeyStatus(context);
+        }
+
+        if (lower.startsWith("set ai key ") || lower.startsWith("set api key ") || lower.startsWith("set openai key ") || lower.startsWith("set open ai key ") || lower.startsWith("set chatgpt key ")) {
+            String key = extractAfterPrefix(command, lower, new String[] { "set ai key ", "set api key ", "set openai key ", "set open ai key ", "set chatgpt key " });
+            int count = JarvisOnlineBrain.setApiKeysFromText(context, key, false);
+            if (count == 0) {
+                return "I could not find a usable OpenAI-style key in that text.";
+            }
+            return "AI key stored locally on this device.";
+        }
+
+        if (lower.startsWith("use ai key ") || lower.startsWith("use key ") || lower.startsWith("select ai key ") || lower.startsWith("select key ") || lower.startsWith("switch ai key ") || lower.startsWith("switch key ")) {
+            int number = extractFirstNumber(lower);
+            if (JarvisOnlineBrain.selectApiKey(context, number)) {
+                return "Active AI key changed to key " + number + ".";
+            }
+            return "I could not select that key. " + JarvisOnlineBrain.getApiKeyStatus(context);
+        }
+
+        if (lower.startsWith("set ai model ") || lower.startsWith("set openai model ") || lower.startsWith("set open ai model ") || lower.startsWith("set chatgpt model ") || lower.startsWith("set chat gpt model ")) {
+            String model = command;
+            String low = lower;
+            String[] markers = new String[] { "set ai model ", "set openai model ", "set open ai model ", "set chatgpt model ", "set chat gpt model " };
+            for (int i = 0; i < markers.length; i++) {
+                if (low.startsWith(markers[i])) {
+                    model = command.substring(markers[i].length()).trim();
+                    break;
+                }
+            }
+            JarvisOnlineBrain.setModel(context, model);
+            return "AI model set to " + model + ".";
+        }
+        if (containsAny(lower, new String[] { "ai status", "key status", "keys status", "stored keys", "chat ai status", "chatgpt status", "chat gpt status", "ai key status", "ai keys status", "api key status", "api keys status", "how many ai keys", "how many keys" })) {
+            return JarvisOnlineBrain.getApiKeyStatus(context);
+        }
+        String prompt = null;
+        String[] markers = new String[] { "ask ai ", "ask the ai ", "ask chatgpt ", "ask chat gpt ", "ask openai ", "ask open ai ", "chat ai ", "chat with ai ", "ai answer ", "jarvis think about " };
+        for (int i = 0; i < markers.length; i++) {
+            int index = lower.indexOf(markers[i]);
+            if (index >= 0) {
+                prompt = command.substring(index + markers[i].length()).trim();
+                break;
+            }
+        }
+        if (prompt != null) {
+            if (prompt.length() == 0) {
+                return "What should I ask the AI core?";
+            }
+            JarvisOnlineBrain.requestChat(context, prompt, output);
+            return "Asking the AI core.";
+        }
+        return null;
+    }
+
+    private static void openAISetupActivity(Context context, JarvisOutput output) {
+        try {
+            Intent intent = new Intent(context, JarvisAISetupActivity.class);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivityCompat(context, intent, output, "AI setup");
+        } catch (Exception error) {
+            log(output, "AI SETUP: Unable to open setup screen: " + error.getMessage());
+        }
+    }
+
+    private static String handleVisionCommand(Context context, String command, String lower, JarvisOutput output) {
+        if (containsAny(lower, new String[] { "facial recognition status", "face recognition status", "known faces", "face memory status", "list faces", "who do you know by face" })) {
+            return JarvisFaceStore.getFaceStatus(context);
+        }
+        if (containsAny(lower, new String[] { "clear face memory", "delete face memory", "forget all faces", "clear known faces", "delete known faces" })) {
+            return JarvisFaceStore.clearFaces(context);
+        }
+        if (isProductVisionCommand(lower)) {
+            openVisionActivity(context, JarvisVisionActivity.MODE_PRODUCT, null, output);
+            return "Opening product vision. I will use local analysis and try to open Google Lens or visual search for stronger product identification.";
+        }
+        if (isBarcodeCommand(lower)) {
+            openVisionActivity(context, JarvisVisionActivity.MODE_BARCODE, null, output);
+            return "Opening QR and barcode scanner.";
+        }
+        if (containsAny(lower, new String[] { "identify objects", "identify object", "camera vision", "what can you see", "scan camera", "analyse camera", "analyze camera", "vision scan", "object recognition", "object detection" })) {
+            openVisionActivity(context, JarvisVisionActivity.MODE_OBJECT, null, output);
+            return "Opening camera vision.";
+        }
+        if (containsAny(lower, new String[] { "recognise face", "recognize face", "who is this person", "who is this face", "scan face", "face recognition", "identify face", "identify this face" })) {
+            openVisionActivity(context, JarvisVisionActivity.MODE_FACE_RECOGNISE, null, output);
+            return "Opening upgraded local face recognition.";
+        }
+        String label = null;
+        String[] markers = new String[] { "remember face as ", "learn face as ", "save face as ", "enrol face as ", "enroll face as ", "enrol my face as ", "enroll my face as " };
+        for (int i = 0; i < markers.length; i++) {
+            int index = lower.indexOf(markers[i]);
+            if (index >= 0) {
+                label = command.substring(index + markers[i].length()).trim();
+                break;
+            }
+        }
+        if (label != null) {
+            label = cleanTrailingPoliteWords(label);
+            if (label.length() == 0) {
+                return "Tell me the name to save with this face.";
+            }
+            openVisionActivity(context, JarvisVisionActivity.MODE_FACE_LEARN, label, output);
+            return "Opening upgraded face enrolment for " + label + ".";
+        }
+        return null;
+    }
+
+    private static boolean isProductVisionCommand(String lower) {
+        if (lower == null) {
+            return false;
+        }
+        if (lower.equals("what is this") || lower.equals("what's this") || lower.equals("what am i holding") || lower.equals("identify this")) {
+            return true;
+        }
+        return containsAny(lower, new String[] { "what is this", "what's this", "what product is this", "identify this product", "identify product", "product search", "search this product", "find this product", "visual product search", "open google lens", "google lens", "lens search", "what am i holding", "scan product", "camera product" });
+    }
+
+    private static boolean isBarcodeCommand(String lower) {
+        if (lower == null) {
+            return false;
+        }
+        return containsAny(lower, new String[] { "scan barcode", "barcode scanner", "barcode scan", "read barcode", "scan qr", "scan qr code", "qr scanner", "qr code scanner", "read qr", "read qr code", "scan code", "read code" });
+    }
+
+    private static void openVisionActivity(Context context, String mode, String label, JarvisOutput output) {
+        try {
+            Intent intent = new Intent(context, JarvisVisionActivity.class);
+            intent.putExtra(JarvisVisionActivity.EXTRA_MODE, mode);
+            if (label != null) {
+                intent.putExtra(JarvisVisionActivity.EXTRA_LABEL, label);
+            }
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivityCompat(context, intent, output, "Jarvis vision");
+        } catch (Exception error) {
+            log(output, "VISION: Unable to open vision core: " + error.getMessage());
+        }
+    }
+
     private static String handleDeviceNavigationCommand(Context context, String lower, JarvisOutput output) {
         if (containsAny(lower, new String[] { "accessibility permission", "accessibility settings", "jarvis permissions", "assistant permissions", "navigation permission", "enable navigation control", "enable back button", "enable recent apps" })) {
             openAccessibilitySettings(context, output);
@@ -503,7 +838,7 @@ public final class JarvisCommandCenter {
         return "Media volume is currently " + current + " out of " + max + ".";
     }
 
-    private static String handleConversationCommand(String lower) {
+    private static String handleConversationCommand(Context context, String lower) {
         if (isThanksCommand(lower)) {
             return randomResponse(new String[] {
                     "You're welcome, sir.",
@@ -514,15 +849,8 @@ public final class JarvisCommandCenter {
                     "No problem. Standing by."
             });
         }
-        if (containsAny(lower, new String[] { "tell a joke", "tell me a joke", "make me laugh", "say something funny", "joke please", "jarvis joke" }) || lower.equals("joke")) {
-            return randomResponse(new String[] {
-                    "I told my code to take a break. It said it needed a runtime environment.",
-                    "Why did the smartphone need glasses? Because it lost its contacts.",
-                    "I would tell you a UDP joke, but you might not get it.",
-                    "Why do programmers prefer dark mode? Because light attracts bugs.",
-                    "I asked the toaster to join the network. It said it was already burnt out.",
-                    "I tried to make a belt out of watches. It was a waist of time."
-            });
+        if (containsAny(lower, new String[] { "tell a joke", "tell me a joke", "make me laugh", "say something funny", "joke please", "jarvis joke", "another joke", "one more joke", "more jokes", "tell me another", "something funny" }) || lower.equals("joke")) {
+            return randomJoke(context);
         }
         if (isGreetingCommand(lower)) {
             return randomResponse(new String[] {
@@ -569,6 +897,52 @@ public final class JarvisCommandCenter {
         return null;
     }
 
+    private static String randomJoke(Context context) {
+        String[] jokes = new String[] {
+                "I asked my processor for a joke. It said humour is still in beta.",
+                "Why did the Android phone need glasses? Because it lost its contacts.",
+                "I would tell you a UDP joke, but you might not get it.",
+                "Why do programmers prefer dark mode? Because light attracts bugs.",
+                "I tried to make a belt out of watches. It was a waist of time.",
+                "I told my code to take a break. It said it needed a runtime environment.",
+                "Why did the robot go on holiday? It needed to recharge its batteries.",
+                "I asked the toaster to join the network. It said it was already burnt out.",
+                "Why did the computer get cold? It left Windows open.",
+                "My GPS told me a joke, but I think it lost direction halfway through.",
+                "Why was the Java developer wearing glasses? Because they could not C sharp.",
+                "I tried to organise a space party, but I could not find the right atmosphere.",
+                "Why did the phone bring a ladder? It wanted better reception.",
+                "I asked the cloud for privacy. It replied with terms and conditions.",
+                "Why did the battery break up with the charger? There was no spark anymore.",
+                "I made a joke about RAM, but it was quickly forgotten.",
+                "Why do robots avoid arguments? They hate getting into endless loops.",
+                "I tried to debug my life. Too many unresolved dependencies.",
+                "Why did the AI cross the road? It detected a higher probability of snacks on the other side.",
+                "I told a joke about Bluetooth. It did not pair well with the audience.",
+                "Why did the app go to therapy? It had too many unresolved intents.",
+                "I asked my sensors for a joke. They said the room was not ready for that level of input.",
+                "Why did the screen feel confident? It had a bright outlook.",
+                "I tried to tell a smart home joke, but the lights turned it off.",
+                "Why did the router laugh? Because the joke had great delivery packets.",
+                "I wrote a joke in binary. Only ten people understood it.",
+                "Why was the keyboard tired? It had too many shifts.",
+                "My calendar told me a joke about days off. It had excellent timing.",
+                "Why did the camera blush? It saw too many pixels.",
+                "I would make an electricity joke, but I am not sure it has enough current.",
+                "Why did the code refuse to run? It had commitment issues.",
+                "I asked the speaker to be quiet. It said that was not its output mode.",
+                "Why did the notification feel important? It always popped up at the worst time.",
+                "I tried to make a joke about artificial intelligence, but I am still learning naturally.",
+                "Why did the hard drive start singing? It had a lot of tracks.",
+                "I asked the microwave for advice. It gave me a warm response.",
+                "Why did the algorithm get promoted? It sorted itself out.",
+                "I told a joke to the camera. It did not smile, but it captured the moment.",
+                "Why did the phone sit near the window? It wanted better bars.",
+                "I tried to tell a joke about cache, but you may have heard it before."
+        };
+        return randomResponseNoRepeat(context, PREF_LAST_JOKE_INDEX, jokes);
+    }
+
     private static boolean isThanksCommand(String lower) {
         if (lower.equals("thanks") || lower.equals("thank you") || lower.equals("cheers") || lower.equals("ta") || lower.equals("nice one")) {
             return true;
@@ -588,10 +962,35 @@ public final class JarvisCommandCenter {
             return "At your service.";
         }
         try {
-            Random random = new Random(System.currentTimeMillis());
-            return responses[random.nextInt(responses.length)];
+            return responses[SHARED_RANDOM.nextInt(responses.length)];
         } catch (Exception ignored) {
             return responses[0];
+        }
+    }
+
+    private static String randomResponseNoRepeat(Context context, String prefKey, String[] responses) {
+        if (responses == null || responses.length == 0) {
+            return "At your service.";
+        }
+        if (responses.length == 1) {
+            return responses[0];
+        }
+        int next = 0;
+        try {
+            int last = -1;
+            if (context != null) {
+                last = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getInt(prefKey, -1);
+            }
+            next = SHARED_RANDOM.nextInt(responses.length);
+            if (next == last) {
+                next = (next + 1 + SHARED_RANDOM.nextInt(responses.length - 1)) % responses.length;
+            }
+            if (context != null) {
+                context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putInt(prefKey, next).apply();
+            }
+            return responses[next];
+        } catch (Exception ignored) {
+            return responses[next];
         }
     }
 
@@ -1423,6 +1822,29 @@ public final class JarvisCommandCenter {
         return "Battery level is " + percent + " percent and the device is " + charging + ".";
     }
 
+    private static String normalizeSpokenCommandText(String command) {
+        if (command == null) {
+            return "";
+        }
+        String result = command.trim().toLowerCase(Locale.UK);
+        result = result.replace("a.i.", "ai");
+        result = result.replace("a. i.", "ai");
+        result = result.replace("a i", "ai");
+        result = result.replace("a eye", "ai");
+        result = result.replace("aye eye", "ai");
+        result = result.replace("hey eye", "ai");
+        result = result.replace("hay eye", "ai");
+        result = result.replace("artificial intelligence", "ai");
+        result = result.replace("a.p.i.", "api");
+        result = result.replace("a p i", "api");
+        result = result.replace("open ai", "openai");
+        result = result.replace("open api", "openai");
+        result = result.replace("chat g p t", "chatgpt");
+        result = result.replace("chat gpt", "chatgpt");
+        result = result.replace("clip board", "clipboard");
+        return result.trim();
+    }
+
     private static boolean containsAny(String text, String[] words) {
         for (int i = 0; i < words.length; i++) {
             if (text.indexOf(words[i]) >= 0) {
@@ -1430,6 +1852,39 @@ public final class JarvisCommandCenter {
             }
         }
         return false;
+    }
+
+
+    private static String extractAfterPrefix(String command, String lower, String[] prefixes) {
+        if (command == null || lower == null || prefixes == null) {
+            return "";
+        }
+        for (int i = 0; i < prefixes.length; i++) {
+            if (lower.startsWith(prefixes[i])) {
+                return command.substring(prefixes[i].length()).trim();
+            }
+        }
+        return command.trim();
+    }
+
+    private static String getClipboardText(Context context) {
+        try {
+            ClipboardManager clipboard = (ClipboardManager) context.getSystemService(Context.CLIPBOARD_SERVICE);
+            if (clipboard == null || !clipboard.hasPrimaryClip()) {
+                return "";
+            }
+            ClipData data = clipboard.getPrimaryClip();
+            if (data == null || data.getItemCount() == 0) {
+                return "";
+            }
+            CharSequence text = data.getItemAt(0).coerceToText(context);
+            if (text == null) {
+                return "";
+            }
+            return text.toString();
+        } catch (Exception ignored) {
+            return "";
+        }
     }
 
     private static int extractFirstNumber(String text) {

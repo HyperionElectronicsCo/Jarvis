@@ -536,6 +536,21 @@ public class JarvisAssistantService extends Service implements TextToSpeech.OnIn
         }
     }
 
+    public void onAsyncResponse(final String text) {
+        if (handler == null) {
+            return;
+        }
+        handler.post(new Runnable() {
+            public void run() {
+                if (text != null && text.length() > 0) {
+                    speak(text, true);
+                } else {
+                    startListeningSoon(650);
+                }
+            }
+        });
+    }
+
     public void onDestroy() {
         destroyed = true;
         if (handler != null) {
