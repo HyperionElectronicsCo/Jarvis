@@ -3,6 +3,8 @@ package com.hyperion.jarvis;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
@@ -10,6 +12,7 @@ import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -43,6 +46,7 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
     private static final int REQUEST_RECORD_AUDIO = 4001;
     private static final int REQUEST_BACKGROUND_AUDIO = 4002;
     private static final int REQUEST_OVERLAY_PERMISSION = 4003;
+    private static final int REQUEST_CREATE_PROJECT_ZIP = 4004;
 
     private JarvisHudView hudView;
     private TextView titleView;
@@ -55,6 +59,14 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
     private Button stopButton;
     private Button muteButton;
     private Button backgroundButton;
+    private LinearLayout codePanel;
+    private TextView codeSnippetView;
+    private Button copyCodeButton;
+    private Button clearCodeButton;
+    private String lastCodeSnippet;
+    private String pendingProjectPackageText;
+    private boolean projectSaveDialogShowing;
+    private boolean projectSaveOfferDismissed;
 
     private SpeechRecognizer speechRecognizer;
     private Intent recognizerIntent;
@@ -79,6 +91,10 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
         overlayNoticeShownThisSession = false;
         accessibilityNoticeShownThisSession = false;
         pendingBackgroundEnableAfterOverlay = false;
+        lastCodeSnippet = "";
+        pendingProjectPackageText = "";
+        projectSaveDialogShowing = false;
+        projectSaveOfferDismissed = false;
 
         Window window = getWindow();
         window.setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
@@ -92,7 +108,7 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
         textToSpeech = new TextToSpeech(this, this);
         appendConsole("BOOT: Native Android Jarvis shell loaded.");
         appendConsole("BOOT: Say OKAY JARVIS, tap LISTEN, or type a command.");
-        appendConsole("BOOT: Commands now include search, weather, reminders, memory, AI chat, camera vision, apps, media, volume, navigation control and background service.");
+        appendConsole("BOOT: Commands now include direct AI fallback after importing a key, project ZIP packaging with save-location picker, full code snippets with Copy/Clear Code, search, weather, reminders, memory, camera vision, apps, media, volume, navigation control and background service.");
         startClock();
         updateMuteButton();
         updateBackgroundButton();
@@ -109,6 +125,8 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
         enforceOverlayRequirementForBackground();
         updateMuteButton();
         updateBackgroundButton();
+        restoreLastCodeSnippetPanel();
+        maybeOfferPendingProjectPackage(false);
         if (pendingBackgroundEnableAfterOverlay && JarvisCommandCenter.hasOverlayPermission(this)) {
             pendingBackgroundEnableAfterOverlay = false;
             startBackgroundFromActivity();
@@ -156,7 +174,7 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
         overlay.addView(visualSpacer, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0f));
 
         transcriptView = new TextView(this);
-        transcriptView.setText("Say: open AI setup, import keys from clipboard, test AI connection, use working key, are keys saved, weather in London, remind me in 10 minutes, remember that my favourite colour is blue, ask AI, camera vision, or okay Jarvis open YouTube.");
+        transcriptView.setText("Say: open AI setup, import keys from clipboard, choose a model, then ask naturally: okay Jarvis give me the code for a Termux script, weather in London, remind me in 10 minutes, camera vision, or open YouTube.");
         transcriptView.setTextColor(Color.argb(230, 210, 250, 255));
         transcriptView.setTextSize(14);
         transcriptView.setGravity(Gravity.CENTER);
@@ -175,9 +193,54 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
         ScrollView consoleScroll = new ScrollView(this);
         consoleScroll.setFillViewport(true);
         consoleScroll.addView(consoleView, new ScrollView.LayoutParams(ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
-        LinearLayout.LayoutParams consoleParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(116));
+        LinearLayout.LayoutParams consoleParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(84));
         consoleParams.topMargin = dp(8);
         overlay.addView(consoleScroll, consoleParams);
+
+        codePanel = new LinearLayout(this);
+        codePanel.setOrientation(LinearLayout.VERTICAL);
+        codePanel.setPadding(dp(8), dp(6), dp(8), dp(6));
+        codePanel.setBackground(makePanelBackground(76, Color.rgb(255, 158, 43), Color.argb(78, 24, 18, 6)));
+        codePanel.setVisibility(View.GONE);
+
+        TextView codeTitle = new TextView(this);
+        codeTitle.setText("CODE SNIPPET");
+        codeTitle.setTextColor(Color.rgb(255, 210, 130));
+        codeTitle.setTextSize(11);
+        codeTitle.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        codePanel.addView(codeTitle, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(18)));
+
+        codeSnippetView = new TextView(this);
+        codeSnippetView.setTextColor(Color.WHITE);
+        codeSnippetView.setTextSize(10);
+        codeSnippetView.setTypeface(Typeface.MONOSPACE);
+        codeSnippetView.setPadding(dp(6), dp(4), dp(6), dp(4));
+        codeSnippetView.setTextIsSelectable(true);
+        codeSnippetView.setBackgroundColor(Color.argb(110, 0, 0, 0));
+        ScrollView codeScroll = new ScrollView(this);
+        codeScroll.addView(codeSnippetView, new ScrollView.LayoutParams(ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
+        codePanel.addView(codeScroll, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(138)));
+
+        LinearLayout codeButtonRow = new LinearLayout(this);
+        codeButtonRow.setOrientation(LinearLayout.HORIZONTAL);
+        codeButtonRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams codeButtonRowParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(34));
+        codeButtonRowParams.topMargin = dp(5);
+        codePanel.addView(codeButtonRow, codeButtonRowParams);
+
+        copyCodeButton = makeButton("COPY CODE");
+        copyCodeButton.setOnClickListener(this);
+        codeButtonRow.addView(copyCodeButton, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.0f));
+
+        clearCodeButton = makeButton("CLEAR CODE");
+        clearCodeButton.setOnClickListener(this);
+        LinearLayout.LayoutParams clearCodeParams = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.0f);
+        clearCodeParams.leftMargin = dp(6);
+        codeButtonRow.addView(clearCodeButton, clearCodeParams);
+
+        LinearLayout.LayoutParams codePanelParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        codePanelParams.topMargin = dp(8);
+        overlay.addView(codePanel, codePanelParams);
 
         LinearLayout typedRow = new LinearLayout(this);
         typedRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -390,6 +453,10 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
             } else {
                 speak("Speech output restored.");
             }
+        } else if (view == copyCodeButton) {
+            copyLastCodeSnippet();
+        } else if (view == clearCodeButton) {
+            clearCodeSnippetPanel(true);
         } else if (view == backgroundButton) {
             if (JarvisCommandCenter.isBackgroundEnabled(this) && JarvisCommandCenter.isBackgroundPaused(this)) {
                 startBackgroundFromActivity();
@@ -864,6 +931,83 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
         return drawable;
     }
 
+    private void restoreLastCodeSnippetPanel() {
+        String saved = JarvisCodeTools.getLastCodeSnippet(this);
+        if (saved.length() == 0 || codePanel == null || codeSnippetView == null) {
+            return;
+        }
+        if (lastCodeSnippet == null || lastCodeSnippet.length() == 0) {
+            lastCodeSnippet = saved;
+            codeSnippetView.setText(saved);
+            codePanel.setVisibility(View.VISIBLE);
+        }
+    }
+
+    private void showCodeSnippet(String code) {
+        final String nextSnippet = code == null ? "" : code;
+        lastCodeSnippet = nextSnippet;
+        JarvisCodeTools.saveLastCodeSnippet(this, lastCodeSnippet);
+        if (codeSnippetView != null) {
+            codeSnippetView.setText("");
+        }
+        if (codePanel != null) {
+            codePanel.setVisibility(View.GONE);
+        }
+        Runnable refresh = new Runnable() {
+            public void run() {
+                if (codeSnippetView != null) {
+                    codeSnippetView.setText(nextSnippet);
+                }
+                if (codePanel != null) {
+                    codePanel.setVisibility(View.VISIBLE);
+                }
+                appendConsole("AI: New code snippet ready. Press COPY CODE to copy it.");
+            }
+        };
+        if (handler != null) {
+            handler.postDelayed(refresh, 140);
+        } else {
+            refresh.run();
+        }
+    }
+
+    private void hideCodeSnippet() {
+        if (codePanel != null) {
+            codePanel.setVisibility(View.GONE);
+        }
+    }
+
+    private void clearCodeSnippetPanel(boolean speakResult) {
+        lastCodeSnippet = "";
+        JarvisCodeTools.clearLastCodeSnippet(this);
+        if (codeSnippetView != null) {
+            codeSnippetView.setText("");
+        }
+        hideCodeSnippet();
+        appendConsole("AI: Code snippet cleared.");
+        if (speakResult) {
+            speak("Code snippet cleared.");
+        }
+    }
+
+    private void copyLastCodeSnippet() {
+        if (lastCodeSnippet == null || lastCodeSnippet.length() == 0) {
+            speak("There is no code snippet to copy yet.");
+            return;
+        }
+        try {
+            ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            if (clipboard != null) {
+                clipboard.setPrimaryClip(ClipData.newPlainText("Jarvis code snippet", lastCodeSnippet));
+                speak("Code copied to clipboard.");
+                return;
+            }
+        } catch (Exception error) {
+            appendConsole("CLIPBOARD: " + error.getMessage());
+        }
+        speak("I could not copy the code snippet.");
+    }
+
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQUEST_RECORD_AUDIO) {
@@ -908,11 +1052,156 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
         updateBackgroundButton();
     }
 
+    public void onClearCodeSnippet() {
+        runOnUiThread(new Runnable() {
+            public void run() {
+                clearCodeSnippetPanel(false);
+            }
+        });
+    }
+
+    public void onSavePendingProjectRequested() {
+        runOnUiThread(new Runnable() {
+            public void run() {
+                if (pendingProjectPackageText == null || pendingProjectPackageText.length() == 0) {
+                    pendingProjectPackageText = JarvisProjectPackager.getPendingProject(MainActivity.this);
+                }
+                if (pendingProjectPackageText == null || pendingProjectPackageText.length() == 0) {
+                    speak("There is no generated project waiting to save.");
+                    return;
+                }
+                projectSaveOfferDismissed = false;
+                maybeOfferPendingProjectPackage(true);
+            }
+        });
+    }
+
+    private void handleProjectPackageAnswer(String text) {
+        pendingProjectPackageText = text == null ? "" : text;
+        projectSaveOfferDismissed = false;
+        JarvisProjectPackager.rememberPendingProject(this, pendingProjectPackageText);
+        clearCodeSnippetPanel(false);
+        int fileCount = JarvisProjectPackager.countProjectFiles(pendingProjectPackageText);
+        appendConsole("AI: Project package ready with " + fileCount + " file" + (fileCount == 1 ? "" : "s") + ". Waiting for save confirmation.");
+        maybeOfferPendingProjectPackage(true);
+    }
+
+    private void maybeOfferPendingProjectPackage(boolean force) {
+        if (projectSaveDialogShowing) {
+            return;
+        }
+        if (pendingProjectPackageText == null || pendingProjectPackageText.length() == 0) {
+            pendingProjectPackageText = JarvisProjectPackager.getPendingProject(this);
+        }
+        if (pendingProjectPackageText == null || pendingProjectPackageText.length() == 0) {
+            return;
+        }
+        if (!JarvisProjectPackager.containsProjectPackage(pendingProjectPackageText)) {
+            JarvisProjectPackager.clearPendingProject(this);
+            pendingProjectPackageText = "";
+            return;
+        }
+        if (projectSaveOfferDismissed && !force) {
+            return;
+        }
+        final String suggestedName = JarvisProjectPackager.getSuggestedZipName(pendingProjectPackageText);
+        final int fileCount = JarvisProjectPackager.countProjectFiles(pendingProjectPackageText);
+        projectSaveDialogShowing = true;
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("Save generated project?");
+        builder.setMessage("Jarvis prepared " + fileCount + " project file" + (fileCount == 1 ? "" : "s") + ". Do you want to choose where to save " + suggestedName + "?");
+        builder.setPositiveButton("Save ZIP", new DialogInterface.OnClickListener() {
+            public void onClick(DialogInterface dialog, int which) {
+                projectSaveDialogShowing = false;
+                projectSaveOfferDismissed = false;
+                launchProjectSavePicker(suggestedName);
+            }
+        });
+        builder.setNegativeButton("Not Now", new DialogInterface.OnClickListener() {
+            public void onClick(DialogInterface dialog, int which) {
+                projectSaveDialogShowing = false;
+                projectSaveOfferDismissed = true;
+                speak("Okay. I kept the generated project. Say save project zip when you want to choose where to save it.");
+            }
+        });
+        builder.setNeutralButton("Discard", new DialogInterface.OnClickListener() {
+            public void onClick(DialogInterface dialog, int which) {
+                projectSaveDialogShowing = false;
+                projectSaveOfferDismissed = false;
+                pendingProjectPackageText = "";
+                JarvisProjectPackager.clearPendingProject(MainActivity.this);
+                speak("Generated project discarded.");
+            }
+        });
+        try {
+            builder.show();
+        } catch (Exception error) {
+            projectSaveDialogShowing = false;
+            appendConsole("SAVE: " + error.getMessage());
+            speak("Project package is ready. Say save project zip to choose where to save it.");
+        }
+    }
+
+    private void launchProjectSavePicker(String suggestedName) {
+        if (pendingProjectPackageText == null || pendingProjectPackageText.length() == 0) {
+            pendingProjectPackageText = JarvisProjectPackager.getPendingProject(this);
+        }
+        if (pendingProjectPackageText == null || pendingProjectPackageText.length() == 0) {
+            speak("There is no generated project waiting to save.");
+            return;
+        }
+        try {
+            Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setType("application/zip");
+            intent.putExtra(Intent.EXTRA_TITLE, suggestedName == null || suggestedName.length() == 0 ? JarvisProjectPackager.getSuggestedZipName(pendingProjectPackageText) : suggestedName);
+            startActivityForResult(intent, REQUEST_CREATE_PROJECT_ZIP);
+        } catch (Exception error) {
+            appendConsole("SAVE: " + error.getMessage());
+            speak("I could not open the Android file picker on this device.");
+        }
+    }
+
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_CREATE_PROJECT_ZIP) {
+            if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+                speak("Project save cancelled.");
+                return;
+            }
+            Uri uri = data.getData();
+            String text = pendingProjectPackageText;
+            if (text == null || text.length() == 0) {
+                text = JarvisProjectPackager.getPendingProject(this);
+            }
+            String result = JarvisProjectPackager.writeProjectZipToUri(this, uri, text);
+            appendConsole("SAVE: " + result);
+            speak(result);
+            if (result.toLowerCase(Locale.UK).indexOf("saved") >= 0) {
+                pendingProjectPackageText = "";
+                projectSaveOfferDismissed = false;
+                JarvisProjectPackager.clearPendingProject(this);
+            }
+        }
+    }
+
     public void onAsyncResponse(final String text) {
         runOnUiThread(new Runnable() {
             public void run() {
                 if (text != null && text.length() > 0) {
-                    speak(text);
+                    if (JarvisProjectPackager.containsProjectPackage(text)) {
+                        handleProjectPackageAnswer(text);
+                        speak("I prepared the project package. Choose Save ZIP to pick where to save it, or Not Now to keep it for later.");
+                        return;
+                    }
+                    String code = JarvisCodeTools.extractFirstCodeBlock(text);
+                    if (code.length() > 0) {
+                        showCodeSnippet(code);
+                        speak(JarvisCodeTools.buildSpokenSummaryForCode(text));
+                    } else {
+                        hideCodeSnippet();
+                        speak(text);
+                    }
                 }
             }
         });

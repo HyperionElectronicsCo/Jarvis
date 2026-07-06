@@ -532,3 +532,117 @@ okay Jarvis listen to 90s hip hop on YouTube
 ```
 
 Instead of only opening the YouTube app, Jarvis attempts to resolve the first matching YouTube video and open that video directly in the official YouTube app, ReVanced, YouTube Music, or the browser as a fallback.
+
+### v1.26 Multi-provider AI keys
+
+Jarvis AI Setup now supports multiple OpenAI-compatible providers:
+
+```text
+OpenAI -> https://api.openai.com/v1
+BazaarLink -> https://bazaarlink.ai/api/v1
+Custom OpenAI-Compatible -> user supplied base URL
+```
+
+Supported key-style imports now include common forms such as:
+
+```text
+sk-proj-...
+sk-...
+sk-bl-...
+sess-...
+key-...
+api-...
+token-...
+bearer-...
+```
+
+Voice commands:
+
+```text
+okay Jarvis set AI provider BazaarLink
+okay Jarvis set AI base URL https://bazaarlink.ai/api/v1
+okay Jarvis AI provider status
+okay Jarvis test AI connection
+```
+
+
+## Jarvis v27 Direct AI Repair
+
+This repair restores direct AI fallback after the multi-provider patch. Once a key is imported, Jarvis can answer natural prompts without the `ask AI` prefix.
+
+Examples:
+
+```text
+okay Jarvis give me the code for a Termux script that lists APKs
+okay Jarvis explain this Java error
+okay Jarvis write a simple Android XML layout
+```
+
+AI Setup includes a model dropdown for `gpt-4o-mini`, `gpt-4.1-mini`, and `gpt-4o`. Code responses are detected from fenced Markdown blocks and shown in a separate code box with a **COPY CODE** button.
+
+## Jarvis v28 Full Answers + Project ZIP Packaging
+
+Jarvis can now ask the configured AI provider for full code/project answers instead of tiny snippets. Project-style requests such as Android Java apps, AIDE projects, game examples, and packaged ZIP requests are routed with a stronger full-project prompt.
+
+Example commands:
+
+```text
+okay Jarvis give me a full Android Java checkers game project
+okay Jarvis make me a packaged zip for an Android Java checkers game
+okay Jarvis create a complete AIDE-compatible Android Java project for a calculator app
+```
+
+When the AI answer uses Jarvis file markers, the app writes a ZIP into Android Downloads. The AI supplies project files as text and Jarvis packages those files locally.
+
+```text
+JARVIS_PROJECT_ZIP: CheckersGame.zip
+JARVIS_FILE: settings.gradle
+```gradle
+...
+```
+JARVIS_FILE: app/src/main/java/com/example/checkers/MainActivity.java
+```java
+...
+```
+```
+
+Jarvis asks for storage permission when needed. The main code panel also shows the largest returned code block and the Copy Code button copies it to the clipboard.
+
+
+## Jarvis v29 Save Picker + Clear Code
+
+Project ZIP creation no longer saves automatically to Downloads. Jarvis now asks whether to save the generated project and opens Android's file picker so the user chooses the folder/name. Project-generation answers are packaged rather than shown in the code snippet panel. Specific code/snippet requests still show the **CODE SNIPPET** panel with **COPY CODE**.
+
+New commands:
+
+```text
+okay Jarvis clear code snippet
+okay Jarvis clear code
+okay Jarvis save project zip
+```
+
+
+## Jarvis v30 Router Priority Repair
+
+Project/code generation requests now route to AI before local shortcut commands such as weather. This fixes prompts like:
+
+```text
+okay Jarvis give me an AIDE compatible Android Java weather app project
+```
+
+Jarvis treats this as an AI project-generation request, not as a local weather forecast command.
+
+
+## Jarvis v31 Conversation Memory + Snippet Refresh
+
+Jarvis now keeps a short recent conversation memory in local app storage so follow-up requests such as `put it in a zip package`, `make that a full project`, or `change the previous app` can refer back to earlier user requests. The memory is included only as recent context for AI calls and skips obvious API keys/tokens/password text.
+
+Useful commands:
+
+```text
+okay Jarvis what was my last request
+okay Jarvis what are we talking about
+okay Jarvis clear conversation memory
+```
+
+New code snippets now visually refresh: Jarvis hides/clears the old code box first, then shows the new snippet so it is obvious that the code changed.

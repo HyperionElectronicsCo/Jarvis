@@ -536,6 +536,19 @@ public class JarvisAssistantService extends Service implements TextToSpeech.OnIn
         }
     }
 
+    public void onClearCodeSnippet() {
+        JarvisCodeTools.clearLastCodeSnippet(this);
+    }
+
+    public void onSavePendingProjectRequested() {
+        String pending = JarvisProjectPackager.getPendingProject(this);
+        if (pending != null && pending.length() > 0) {
+            speak("Open Jarvis to choose where to save the generated project zip.", true);
+        } else {
+            speak("There is no generated project waiting to save.", true);
+        }
+    }
+
     public void onAsyncResponse(final String text) {
         if (handler == null) {
             return;
@@ -543,7 +556,19 @@ public class JarvisAssistantService extends Service implements TextToSpeech.OnIn
         handler.post(new Runnable() {
             public void run() {
                 if (text != null && text.length() > 0) {
-                    speak(text, true);
+                    if (JarvisProjectPackager.containsProjectPackage(text)) {
+                        JarvisProjectPackager.rememberPendingProject(JarvisAssistantService.this, text);
+                        JarvisCodeTools.clearLastCodeSnippet(JarvisAssistantService.this);
+                        speak("I prepared the project package. Open Jarvis to choose where to save the zip file.", true);
+                        return;
+                    }
+                    String code = JarvisCodeTools.extractFirstCodeBlock(text);
+                    if (code.length() > 0) {
+                        JarvisCodeTools.saveLastCodeSnippet(JarvisAssistantService.this, code);
+                        speak("I prepared a code snippet. Open Jarvis to view and copy it from the code box.", true);
+                    } else {
+                        speak(text, true);
+                    }
                 } else {
                     startListeningSoon(650);
                 }

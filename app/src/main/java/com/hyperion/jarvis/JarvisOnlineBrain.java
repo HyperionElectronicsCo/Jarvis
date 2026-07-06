@@ -25,7 +25,17 @@ public final class JarvisOnlineBrain {
     private static final String PREF_OPENAI_KEYS = "openai_api_keys_v2";
     private static final String PREF_OPENAI_ACTIVE_INDEX = "openai_api_active_index_v2";
     private static final String PREF_OPENAI_MODEL = "openai_model";
+    private static final String PREF_AI_PROVIDER = "ai_provider_v26";
+    private static final String PREF_AI_BASE_URL = "ai_base_url_v26";
+    public static final String PROVIDER_OPENAI = "OpenAI";
+    public static final String PROVIDER_BAZAARLINK = "BazaarLink";
+    public static final String PROVIDER_CUSTOM = "Custom OpenAI-Compatible";
+    private static final String DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
+    private static final String BAZAARLINK_BASE_URL = "https://bazaarlink.ai/api/v1";
     private static final String DEFAULT_MODEL = "gpt-4o-mini";
+    public static final String MODEL_GPT_4O_MINI = "gpt-4o-mini";
+    public static final String MODEL_GPT_41_MINI = "gpt-4.1-mini";
+    public static final String MODEL_GPT_4O = "gpt-4o";
 
     private JarvisOnlineBrain() {
     }
@@ -63,11 +73,16 @@ public final class JarvisOnlineBrain {
             }
         }
         if (count > 0) {
-            prefs.edit()
+            String firstKey = getFirstLine(builder.toString());
+            SharedPreferences.Editor editor = prefs.edit()
                     .putString(PREF_OPENAI_KEYS, builder.toString())
-                    .putString(PREF_OPENAI_KEY, getFirstLine(builder.toString()))
-                    .putInt(PREF_OPENAI_ACTIVE_INDEX, 0)
-                    .commit();
+                    .putString(PREF_OPENAI_KEY, firstKey)
+                    .putInt(PREF_OPENAI_ACTIVE_INDEX, 0);
+            if (firstKey.toLowerCase(Locale.UK).startsWith("sk-bl-")) {
+                editor.putString(PREF_AI_PROVIDER, PROVIDER_BAZAARLINK);
+                editor.putString(PREF_AI_BASE_URL, BAZAARLINK_BASE_URL);
+            }
+            editor.commit();
         }
         return count;
     }
@@ -123,7 +138,7 @@ public final class JarvisOnlineBrain {
             return "AI core is not configured. Type: set ai key YOUR_API_KEY, or copy keys and type: import ai keys from clipboard.";
         }
         String active = getActiveApiKey(context);
-        return "AI core is configured with " + count + " local key" + (count == 1 ? "" : "s") + ". Active key is " + getActiveKeyNumber(context) + " of " + count + ", ending " + keyEnding(active) + ". Current model is " + getModel(context) + ".";
+        return "AI core is configured with " + count + " local key" + (count == 1 ? "" : "s") + ". Active key is " + getActiveKeyNumber(context) + " of " + count + ", ending " + keyEnding(active) + ". Provider is " + getProvider(context) + ". Base URL is " + getBaseUrl(context) + ". Current model is " + getModel(context) + ".";
     }
 
 
@@ -163,10 +178,11 @@ public final class JarvisOnlineBrain {
                 if (key.length() == 0) {
                     return "No AI key is stored. Open AI setup and import one from the clipboard.";
                 }
-                return "Active AI key test: " + testKeyBlocking(key);
+                return "Active AI key test: " + testKeyBlocking(appContext, key);
             }
 
             protected void onPostExecute(String result) {
+                JarvisConversationMemory.rememberAssistant(appContext, result);
                 deliver(output, result);
             }
         }.execute();
@@ -182,7 +198,7 @@ public final class JarvisOnlineBrain {
                 }
                 StringBuilder report = new StringBuilder();
                 for (int i = 0; i < keys.length; i++) {
-                    String result = testKeyBlocking(keys[i]);
+                    String result = testKeyBlocking(appContext, keys[i]);
                     report.append("Key ").append(i + 1).append(" ").append(keyEnding(keys[i])).append(": ").append(result);
                     if (i < keys.length - 1) {
                         report.append('\n');
@@ -201,16 +217,16 @@ public final class JarvisOnlineBrain {
         }.execute();
     }
 
-    private static String testKeyBlocking(String key) {
+    private static String testKeyBlocking(Context context, String key) {
         HttpURLConnection connection = null;
         try {
-            URL url = new URL("https://api.openai.com/v1/models");
+            URL url = new URL(getModelsUrl(context));
             connection = (HttpURLConnection) url.openConnection();
             connection.setConnectTimeout(12000);
             connection.setReadTimeout(16000);
             connection.setRequestMethod("GET");
             connection.setRequestProperty("Authorization", "Bearer " + key.trim());
-            connection.setRequestProperty("User-Agent", "JarvisAIDE/1.15 Android");
+            connection.setRequestProperty("User-Agent", "JarvisAIDE/1.31 Android");
             int code = connection.getResponseCode();
             InputStream input;
             if (code >= 400) {
@@ -262,6 +278,154 @@ public final class JarvisOnlineBrain {
         return "No readable service message.";
     }
 
+
+    public static String[] getProviderOptions() {
+        return new String[] { PROVIDER_OPENAI, PROVIDER_BAZAARLINK, PROVIDER_CUSTOM };
+    }
+
+    public static int getProviderIndex(Context context) {
+        String current = getProvider(context);
+        String[] options = getProviderOptions();
+        for (int i = 0; i < options.length; i++) {
+            if (options[i].equalsIgnoreCase(current)) {
+                return i;
+            }
+        }
+        return 0;
+    }
+
+    public static void setProvider(Context context, String provider) {
+        if (context == null || provider == null) {
+            return;
+        }
+        String normal = normaliseProvider(provider);
+        SharedPreferences.Editor edit = context.getSharedPreferences(JarvisCommandCenter.PREFS_NAME, Context.MODE_PRIVATE).edit();
+        edit.putString(PREF_AI_PROVIDER, normal);
+        if (PROVIDER_OPENAI.equals(normal)) {
+            edit.putString(PREF_AI_BASE_URL, DEFAULT_OPENAI_BASE_URL);
+        } else if (PROVIDER_BAZAARLINK.equals(normal)) {
+            edit.putString(PREF_AI_BASE_URL, BAZAARLINK_BASE_URL);
+        }
+        edit.commit();
+    }
+
+    public static String getProvider(Context context) {
+        if (context == null) {
+            return PROVIDER_OPENAI;
+        }
+        String saved = context.getSharedPreferences(JarvisCommandCenter.PREFS_NAME, Context.MODE_PRIVATE).getString(PREF_AI_PROVIDER, PROVIDER_OPENAI);
+        return normaliseProvider(saved);
+    }
+
+    public static void setBaseUrl(Context context, String baseUrl) {
+        if (context == null || baseUrl == null) {
+            return;
+        }
+        String clean = normaliseBaseUrl(baseUrl);
+        if (clean.length() == 0) {
+            return;
+        }
+        context.getSharedPreferences(JarvisCommandCenter.PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(PREF_AI_BASE_URL, clean)
+                .putString(PREF_AI_PROVIDER, providerForBaseUrl(clean))
+                .commit();
+    }
+
+    public static String getBaseUrl(Context context) {
+        if (context == null) {
+            return DEFAULT_OPENAI_BASE_URL;
+        }
+        SharedPreferences prefs = context.getSharedPreferences(JarvisCommandCenter.PREFS_NAME, Context.MODE_PRIVATE);
+        String provider = getProvider(context);
+        String saved = prefs.getString(PREF_AI_BASE_URL, "");
+        if (saved == null || saved.trim().length() == 0) {
+            if (PROVIDER_BAZAARLINK.equals(provider)) {
+                return BAZAARLINK_BASE_URL;
+            }
+            return DEFAULT_OPENAI_BASE_URL;
+        }
+        return normaliseBaseUrl(saved);
+    }
+
+    public static String getChatCompletionsUrl(Context context) {
+        return getBaseUrl(context) + "/chat/completions";
+    }
+
+    public static String getModelsUrl(Context context) {
+        return getBaseUrl(context) + "/models";
+    }
+
+    private static String normaliseProvider(String provider) {
+        if (provider == null) {
+            return PROVIDER_OPENAI;
+        }
+        String low = provider.trim().toLowerCase(Locale.UK);
+        if (low.indexOf("bazaar") >= 0 || low.indexOf("sk-bl") >= 0) {
+            return PROVIDER_BAZAARLINK;
+        }
+        if (low.indexOf("custom") >= 0 || low.indexOf("compatible") >= 0) {
+            return PROVIDER_CUSTOM;
+        }
+        return PROVIDER_OPENAI;
+    }
+
+    private static String providerForBaseUrl(String baseUrl) {
+        if (baseUrl == null) {
+            return PROVIDER_OPENAI;
+        }
+        String low = baseUrl.toLowerCase(Locale.UK);
+        if (low.indexOf("bazaarlink.ai") >= 0) {
+            return PROVIDER_BAZAARLINK;
+        }
+        if (low.indexOf("api.openai.com") >= 0) {
+            return PROVIDER_OPENAI;
+        }
+        return PROVIDER_CUSTOM;
+    }
+
+    private static String normaliseBaseUrl(String baseUrl) {
+        if (baseUrl == null) {
+            return "";
+        }
+        String clean = baseUrl.trim();
+        if (clean.length() == 0) {
+            return "";
+        }
+        if (!clean.startsWith("http://") && !clean.startsWith("https://")) {
+            clean = "https://" + clean;
+        }
+        while (clean.endsWith("/")) {
+            clean = clean.substring(0, clean.length() - 1);
+        }
+        if (clean.endsWith("/chat/completions")) {
+            clean = clean.substring(0, clean.length() - "/chat/completions".length());
+        }
+        if (clean.endsWith("/models")) {
+            clean = clean.substring(0, clean.length() - "/models".length());
+        }
+        while (clean.endsWith("/")) {
+            clean = clean.substring(0, clean.length() - 1);
+        }
+        return clean;
+    }
+
+
+    public static String[] getAvailableModels() {
+        return new String[] { MODEL_GPT_4O_MINI, MODEL_GPT_41_MINI, MODEL_GPT_4O };
+    }
+
+    public static int getModelIndex(Context context) {
+        String current = getModel(context);
+        String[] models = getAvailableModels();
+        for (int i = 0; i < models.length; i++) {
+            if (models[i].equalsIgnoreCase(current)) {
+                return i;
+            }
+        }
+        return 0;
+    }
+
     public static void setModel(Context context, String model) {
         if (context == null || model == null || model.trim().length() == 0) {
             return;
@@ -285,6 +449,141 @@ public final class JarvisOnlineBrain {
         return model.trim();
     }
 
+
+
+    public static String buildBackupText(Context context) {
+        StringBuilder builder = new StringBuilder();
+        builder.append("JARVIS_BACKUP_V2\n");
+        builder.append("created=").append(new java.text.SimpleDateFormat("dd/MM/yyyy HH:mm:ss", java.util.Locale.UK).format(new java.util.Date())).append("\n");
+        builder.append("package=").append(context == null ? "com.hyperion.jarvis" : context.getPackageName()).append("\n");
+        builder.append("provider=").append(escapeBackupValue(getProvider(context))).append("\n");
+        builder.append("base_url=").append(escapeBackupValue(getBaseUrl(context))).append("\n");
+        builder.append("model=").append(escapeBackupValue(getModel(context))).append("\n");
+        builder.append("active_key=").append(getActiveKeyNumber(context)).append("\n");
+        builder.append("keys_begin\n");
+        String[] keys = getStoredKeys(context);
+        for (int i = 0; i < keys.length; i++) {
+            builder.append(keys[i]).append("\n");
+        }
+        builder.append("keys_end\n");
+        return builder.toString();
+    }
+
+    public static String restoreBackupText(Context context, String backupText) {
+        if (context == null) {
+            return "No Android context available.";
+        }
+        if (backupText == null || backupText.trim().length() == 0) {
+            return "Backup file was empty.";
+        }
+        if (backupText.indexOf("JARVIS_BACKUP_V1") < 0 && backupText.indexOf("JARVIS_BACKUP_V2") < 0) {
+            return "That file is not a recognised Jarvis backup.";
+        }
+        String[] lines = backupText.replace('\r', '\n').split("\\n");
+        String model = DEFAULT_MODEL;
+        String provider = "";
+        String baseUrl = "";
+        int activeKey = 1;
+        boolean inKeys = false;
+        StringBuilder keys = new StringBuilder();
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (line == null) {
+                continue;
+            }
+            String trimmed = line.trim();
+            if (trimmed.equals("keys_begin")) {
+                inKeys = true;
+                continue;
+            }
+            if (trimmed.equals("keys_end")) {
+                inKeys = false;
+                continue;
+            }
+            if (inKeys) {
+                if (trimmed.length() > 0) {
+                    if (keys.length() > 0) {
+                        keys.append('\n');
+                    }
+                    keys.append(trimmed);
+                }
+                continue;
+            }
+            if (trimmed.startsWith("model=")) {
+                model = unescapeBackupValue(trimmed.substring(6));
+                continue;
+            }
+            if (trimmed.startsWith("provider=")) {
+                provider = unescapeBackupValue(trimmed.substring(9));
+                continue;
+            }
+            if (trimmed.startsWith("base_url=")) {
+                baseUrl = unescapeBackupValue(trimmed.substring(9));
+                continue;
+            }
+            if (trimmed.startsWith("active_key=")) {
+                try {
+                    activeKey = Integer.parseInt(trimmed.substring(11).trim());
+                } catch (Exception ignored) {
+                    activeKey = 1;
+                }
+            }
+        }
+        if (provider != null && provider.trim().length() > 0) {
+            setProvider(context, provider.trim());
+        }
+        if (baseUrl != null && baseUrl.trim().length() > 0) {
+            setBaseUrl(context, baseUrl.trim());
+        }
+        if (model != null && model.trim().length() > 0) {
+            setModel(context, model.trim());
+        }
+        int count = 0;
+        if (keys.length() > 0) {
+            count = setApiKeysFromText(context, keys.toString(), false);
+            if (activeKey > 0) {
+                selectApiKey(context, activeKey);
+            }
+        }
+        return "Restored provider " + getProvider(context) + ", base URL " + getBaseUrl(context) + ", model " + getModel(context) + " and " + count + " AI key" + (count == 1 ? "" : "s") + ".";
+    }
+
+    private static String escapeBackupValue(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r");
+    }
+
+    private static String unescapeBackupValue(String value) {
+        if (value == null) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder();
+        boolean slash = false;
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (slash) {
+                if (c == 'n') {
+                    builder.append('\n');
+                } else if (c == 'r') {
+                    builder.append('\r');
+                } else {
+                    builder.append(c);
+                }
+                slash = false;
+            } else if (c == '\\') {
+                slash = true;
+            } else {
+                builder.append(c);
+            }
+        }
+        if (slash) {
+            builder.append('\\');
+        }
+        return builder.toString();
+    }
+
     public static void requestChat(final Context context, final String prompt, final JarvisOutput output) {
         final Context appContext = context.getApplicationContext();
         new AsyncTask<Void, Void, String>() {
@@ -300,15 +599,16 @@ public final class JarvisOnlineBrain {
                     JSONArray messages = new JSONArray();
                     JSONObject system = new JSONObject();
                     system.put("role", "system");
-                    system.put("content", "You are JARVIS inside an Android assistant app. Be helpful, concise and practical. If controlling the phone is needed, explain what command the user can say.");
+                    system.put("content", buildSystemPrompt(prompt));
                     messages.put(system);
                     JSONObject user = new JSONObject();
                     user.put("role", "user");
-                    user.put("content", prompt);
+                    user.put("content", buildUserPrompt(appContext, prompt));
                     messages.put(user);
                     body.put("messages", messages);
-                    body.put("temperature", 0.6);
-                    String response = postJson("https://api.openai.com/v1/chat/completions", body.toString(), key.trim());
+                    body.put("temperature", 0.55);
+                    body.put("max_tokens", 6000);
+                    String response = postJson(getChatCompletionsUrl(appContext), body.toString(), key.trim());
                     JSONObject json = new JSONObject(response);
                     if (json.has("error")) {
                         JSONObject error = json.getJSONObject("error");
@@ -331,9 +631,63 @@ public final class JarvisOnlineBrain {
             }
 
             protected void onPostExecute(String result) {
+                JarvisConversationMemory.rememberAssistant(appContext, result);
                 deliver(output, result);
             }
         }.execute();
+    }
+
+
+    private static String buildSystemPrompt(String prompt) {
+        String base = "You are JARVIS inside an Android assistant app. Be helpful, detailed and practical. The user may speak naturally without saying ask AI. Use recent conversation memory to understand follow-up requests and corrections. Never give tiny placeholder snippets when the user asks for code. For code requests, provide complete usable code, imports, manifest/build files when relevant, and short setup instructions. Do not say omitted for brevity unless the provider response limit prevents completion. If controlling the phone is needed, explain what Jarvis command the user can say.";
+        if (JarvisProjectPackager.looksLikeProjectZipRequest(prompt)) {
+            return base + " When the user asks to create a project, full project, Android Java app project, game project, AIDE project, or packaged zip, answer using the Jarvis package format exactly. Start with JARVIS_PROJECT_ZIP: followed by a safe zip filename. Then provide every file using JARVIS_FILE: path/to/file followed immediately by a fenced code block containing the full file content. Include settings.gradle, build.gradle, app/build.gradle, AndroidManifest.xml, Java source, and XML/resources needed for a minimal complete AIDE-compatible Android Java project. Do not include normal explanatory code snippets outside the Jarvis file blocks because Jarvis will ask the user where to save the ZIP. Do not use lambdas. Do not include placeholder comments such as add the rest here.";
+        }
+        if (JarvisCodeTools.looksLikeCodeRequest(prompt)) {
+            return base + " Put the main usable code in fenced Markdown code blocks. Prefer complete files over fragments. Include enough detail that the user can copy and run it in AIDE or Termux.";
+        }
+        return base;
+    }
+
+    private static String buildUserPrompt(Context context, String prompt) {
+        String userPrompt = buildUserPrompt(prompt);
+        String memory = JarvisConversationMemory.buildContextText(context, prompt);
+        if (memory == null || memory.trim().length() == 0) {
+            return userPrompt;
+        }
+        return memory + "\n\nCurrent user request:\n" + userPrompt;
+    }
+
+    private static String buildUserPrompt(String prompt) {
+        if (prompt == null) {
+            prompt = "";
+        }
+        if (JarvisProjectPackager.looksLikeProjectZipRequest(prompt)) {
+            return "Create a complete packaged project for this request: " + prompt
+                    + "\n\nUse this exact output format so Jarvis can package the project and ask the user where to save the ZIP:"
+                    + "\nJARVIS_PROJECT_ZIP: ProjectName.zip"
+                    + "\nJARVIS_FILE: settings.gradle"
+                    + "\n```gradle"
+                    + "\nFULL FILE CONTENT HERE"
+                    + "\n```"
+                    + "\nJARVIS_FILE: app/build.gradle"
+                    + "\n```gradle"
+                    + "\nFULL FILE CONTENT HERE"
+                    + "\n```"
+                    + "\nJARVIS_FILE: app/src/main/AndroidManifest.xml"
+                    + "\n```xml"
+                    + "\nFULL FILE CONTENT HERE"
+                    + "\n```"
+                    + "\nJARVIS_FILE: app/src/main/java/com/example/project/MainActivity.java"
+                    + "\n```java"
+                    + "\nFULL FILE CONTENT HERE"
+                    + "\n```"
+                    + "\n\nRules: include all minimal files required, use Android Java, no lambdas, no AndroidX unless absolutely required, target AIDE compatibility, make the answer complete even if long. Do not provide an extra ordinary code snippet for project requests; Jarvis will package the files and ask the user where to save them.";
+        }
+        if (JarvisCodeTools.looksLikeCodeRequest(prompt)) {
+            return prompt + "\n\nGive the full usable answer. If code is needed, use complete fenced code blocks, not a short tiny snippet. Include setup/run instructions after the code.";
+        }
+        return prompt;
     }
 
     public static void requestWeather(final Context context, final String location, final JarvisOutput output) {
@@ -517,7 +871,18 @@ public final class JarvisOnlineBrain {
             return false;
         }
         String value = key.trim();
-        return value.startsWith("sk-") && value.length() >= 20 && value.indexOf(' ') < 0;
+        String low = value.toLowerCase(Locale.UK);
+        if (value.length() < 16 || value.indexOf(' ') >= 0) {
+            return false;
+        }
+        return low.startsWith("sk-")
+                || low.startsWith("sk-proj-")
+                || low.startsWith("sk-bl-")
+                || low.startsWith("sess-")
+                || low.startsWith("key-")
+                || low.startsWith("api-")
+                || low.startsWith("token-")
+                || low.startsWith("bearer-");
     }
 
     private static boolean arrayContains(String[] values, int count, String key) {
@@ -573,7 +938,7 @@ public final class JarvisOnlineBrain {
             connection = (HttpURLConnection) url.openConnection();
             connection.setConnectTimeout(14000);
             connection.setReadTimeout(16000);
-            connection.setRequestProperty("User-Agent", "JarvisAIDE/1.13 Android");
+            connection.setRequestProperty("User-Agent", "JarvisAIDE/1.31 Android");
             InputStream input = new BufferedInputStream(connection.getInputStream());
             return readStream(input);
         } finally {

@@ -93,9 +93,15 @@ public final class JarvisCommandCenter {
         }
 
         String lower = command.toLowerCase(Locale.UK);
+        JarvisConversationMemory.rememberUser(context, command);
 
         if (containsAny(lower, new String[] { "help", "commands", "what can you do" })) {
-            return "You can say okay Jarvis, then ask me to search Google, open AI setup, import keys from clipboard, test AI connection, use a working AI key, ask AI, get weather, set alarms and reminders, remember personal facts, fact check public facts, use camera vision, ask what is this, search products with visual/Lens support, scan QR codes and barcodes, recognise enrolled faces with the upgraded local face engine, identify songs through Shazam or SoundHound, resolve and play the first matching YouTube result, navigate somewhere, open installed apps, play music, control volume, control media, go home, go back, show recent apps, close the current app, pause listening, resume listening, or run in the background. I also understand voice variants like A I, API key, Chat G P T and key setup.";
+            return "You can say okay Jarvis, then ask me anything once an AI key is imported, remember recent conversation context, create AIDE-compatible project ZIPs, open AI setup, import keys from clipboard, test AI connection, use a working AI key, get weather, set alarms and reminders, remember personal facts, fact check public facts, use camera vision, ask what is this, search products with visual/Lens support, scan QR codes and barcodes, recognise enrolled faces with the upgraded local face engine, identify songs through Shazam or SoundHound, resolve and play the first matching YouTube result, navigate somewhere, open installed apps, play music, control volume, control media, go home, go back, show recent apps, close the current app, pause listening, resume listening, or run in the background. I also understand voice variants like A I, API key, Chat G P T and key setup.";
+        }
+
+        String conversationMemoryResponse = handleConversationMemoryCommand(context, lower);
+        if (conversationMemoryResponse != null) {
+            return conversationMemoryResponse;
         }
 
         String conversationResponse = handleConversationCommand(context, lower);
@@ -106,6 +112,16 @@ public final class JarvisCommandCenter {
         String memoryResponse = handleMemoryCommand(context, command, lower, output);
         if (memoryResponse != null) {
             return memoryResponse;
+        }
+
+        String followUpAiResponse = handleFollowUpAICommand(context, command, lower, output);
+        if (followUpAiResponse != null) {
+            return followUpAiResponse;
+        }
+
+        String highPriorityAiResponse = handleHighPriorityProjectOrCodeAI(context, command, lower, output);
+        if (highPriorityAiResponse != null) {
+            return highPriorityAiResponse;
         }
 
         String weatherResponse = handleWeatherCommand(context, command, lower, output);
@@ -159,6 +175,19 @@ public final class JarvisCommandCenter {
                 output.onClearConsole();
             }
             return "Console cleared.";
+        }
+        if (isClearCodeSnippetCommand(lower)) {
+            JarvisCodeTools.clearLastCodeSnippet(context);
+            if (output != null) {
+                output.onClearCodeSnippet();
+            }
+            return "Code snippet cleared.";
+        }
+        if (isSavePendingProjectCommand(lower)) {
+            if (output != null) {
+                output.onSavePendingProjectRequested();
+            }
+            return "Opening the save prompt for the last generated project.";
         }
         if (containsAny(lower, new String[] { "unmute jarvis", "unmute speech", "speak again" })) {
             setMuted(context, false);
@@ -288,14 +317,24 @@ public final class JarvisCommandCenter {
 
         if (isQuestion(lower)) {
             if (JarvisOnlineBrain.hasApiKey(context)) {
-                JarvisOnlineBrain.requestChat(context, command, output);
-                return "Asking the AI core.";
+                startAIRequest(context, command, lower, output);
+                return getAIWorkingMessage(lower);
             }
             openWebSearch(context, command, output);
             return "I will search Google for that.";
         }
 
-        return "I heard, " + command + ". I do not have a local action for that yet. Say search for followed by your question to ask Google.";
+        if (shouldSendToAI(lower) && JarvisOnlineBrain.hasApiKey(context)) {
+            startAIRequest(context, command, lower, output);
+            return getAIWorkingMessage(lower);
+        }
+
+        if (JarvisOnlineBrain.hasApiKey(context)) {
+            startAIRequest(context, command, lower, output);
+            return getAIWorkingMessage(lower);
+        }
+
+        return "I heard, " + command + ". I do not have a local action for that yet. Import an AI key and I can answer this directly, or say search for followed by your question to ask Google.";
     }
 
     public static boolean isMuted(Context context) {
@@ -522,7 +561,7 @@ public final class JarvisCommandCenter {
 
     private static String handleAICommand(Context context, String command, String lower, JarvisOutput output) {
         if (containsAny(lower, new String[] { "ai command test", "jarvis command test", "v16 command test", "ai router test" })) {
-            return "Jarvis command router v16 is active. AI setup, key import, key testing and persistence commands are online.";
+            return "Jarvis command router v26 is active. Multi-provider AI setup, BazaarLink keys, custom endpoints, key import and key testing are online.";
         }
 
         if (containsAny(lower, new String[] { "open ai setup", "open the ai setup", "ai setup", "setup ai", "set up ai", "setup chat ai", "set up chat ai", "open chat ai setup", "open openai setup", "open open ai setup", "open api setup", "api setup", "open key setup", "key setup", "ai key setup", "open ai key setup", "open ai settings", "ai settings", "chatgpt setup", "chat gpt setup", "chat setup", "open chat setup", "open setup screen", "open setup" })) {
@@ -544,6 +583,22 @@ public final class JarvisCommandCenter {
             return "Testing stored AI keys and selecting the first working one.";
         }
 
+        if (lower.startsWith("set ai provider ") || lower.startsWith("set provider ") || lower.startsWith("use ai provider ") || lower.startsWith("use provider ")) {
+            String provider = extractAfterPrefix(command, lower, new String[] { "set ai provider ", "set provider ", "use ai provider ", "use provider " });
+            JarvisOnlineBrain.setProvider(context, provider);
+            return "AI provider set to " + JarvisOnlineBrain.getProvider(context) + " using " + JarvisOnlineBrain.getBaseUrl(context) + ".";
+        }
+
+        if (lower.startsWith("set ai base url ") || lower.startsWith("set base url ") || lower.startsWith("set ai endpoint ") || lower.startsWith("set endpoint ")) {
+            String baseUrl = extractAfterPrefix(command, lower, new String[] { "set ai base url ", "set base url ", "set ai endpoint ", "set endpoint " });
+            JarvisOnlineBrain.setBaseUrl(context, baseUrl);
+            return "AI endpoint set to " + JarvisOnlineBrain.getBaseUrl(context) + ". Provider is " + JarvisOnlineBrain.getProvider(context) + ".";
+        }
+
+        if (containsAny(lower, new String[] { "ai provider status", "provider status", "ai endpoint status", "base url status", "current ai provider", "current provider" })) {
+            return "Provider: " + JarvisOnlineBrain.getProvider(context) + ". Base URL: " + JarvisOnlineBrain.getBaseUrl(context) + ". Model: " + JarvisOnlineBrain.getModel(context) + ".";
+        }
+
         if (lower.startsWith("clear ai keys") || lower.startsWith("clear keys") || lower.startsWith("delete ai keys") || lower.startsWith("delete keys") || lower.startsWith("forget ai keys") || lower.startsWith("forget keys") || lower.startsWith("remove ai keys") || lower.startsWith("remove keys")) {
             JarvisOnlineBrain.clearApiKeys(context);
             return "All locally stored AI keys have been removed from this device.";
@@ -560,7 +615,7 @@ public final class JarvisCommandCenter {
             }
             int count = JarvisOnlineBrain.setApiKeysFromText(context, clipboardText, false);
             if (count == 0) {
-                return "I could not find any usable OpenAI-style keys in the clipboard.";
+                return "I could not find any usable OpenAI-compatible keys in the clipboard.";
             }
             return "Imported " + count + " AI key" + (count == 1 ? "" : "s") + " from the clipboard and stored them locally on this device.";
         }
@@ -576,7 +631,7 @@ public final class JarvisCommandCenter {
             }
             int count = JarvisOnlineBrain.setApiKeysFromText(context, clipboardText, true);
             if (count == 0) {
-                return "I could not find any usable OpenAI-style keys in the clipboard.";
+                return "I could not find any usable OpenAI-compatible keys in the clipboard.";
             }
             return "AI key vault now contains " + count + " local key" + (count == 1 ? "" : "s") + ".";
         }
@@ -585,7 +640,7 @@ public final class JarvisCommandCenter {
             String keysText = extractAfterPrefix(command, lower, new String[] { "set ai keys ", "set api keys ", "set openai keys ", "set open ai keys ", "set chatgpt keys " });
             int count = JarvisOnlineBrain.setApiKeysFromText(context, keysText, false);
             if (count == 0) {
-                return "I could not find any usable OpenAI-style keys in that text.";
+                return "I could not find any usable OpenAI-compatible keys in that text.";
             }
             return "Stored " + count + " AI key" + (count == 1 ? "" : "s") + " locally on this device.";
         }
@@ -594,7 +649,7 @@ public final class JarvisCommandCenter {
             String keyText = extractAfterPrefix(command, lower, new String[] { "add ai key ", "add api key ", "add openai key ", "add open ai key ", "add chatgpt key " });
             int count = JarvisOnlineBrain.setApiKeysFromText(context, keyText, true);
             if (count == 0) {
-                return "I could not find a usable OpenAI-style key in that text.";
+                return "I could not find a usable OpenAI-compatible key in that text.";
             }
             return "AI key added. " + JarvisOnlineBrain.getApiKeyStatus(context);
         }
@@ -603,7 +658,7 @@ public final class JarvisCommandCenter {
             String key = extractAfterPrefix(command, lower, new String[] { "set ai key ", "set api key ", "set openai key ", "set open ai key ", "set chatgpt key " });
             int count = JarvisOnlineBrain.setApiKeysFromText(context, key, false);
             if (count == 0) {
-                return "I could not find a usable OpenAI-style key in that text.";
+                return "I could not find a usable OpenAI-compatible key in that text.";
             }
             return "AI key stored locally on this device.";
         }
@@ -645,7 +700,7 @@ public final class JarvisCommandCenter {
             if (prompt.length() == 0) {
                 return "What should I ask the AI core?";
             }
-            JarvisOnlineBrain.requestChat(context, prompt, output);
+            startAIRequest(context, prompt, prompt.toLowerCase(Locale.UK), output);
             return "Asking the AI core.";
         }
         return null;
@@ -849,6 +904,68 @@ public final class JarvisCommandCenter {
             return "Media volume decreased.";
         }
         return "Media volume is currently " + current + " out of " + max + ".";
+    }
+
+    private static String handleConversationMemoryCommand(Context context, String lower) {
+        if (containsAny(lower, new String[] { "clear conversation memory", "clear chat memory", "forget conversation", "forget this conversation", "reset conversation context", "clear recent context" })) {
+            JarvisConversationMemory.clear(context);
+            return "Recent conversation memory cleared.";
+        }
+        if (containsAny(lower, new String[] { "what was my last request", "what did i just ask", "what are we talking about", "what was the previous request", "conversation memory status" })) {
+            String last = JarvisConversationMemory.getLastUserRequest(context);
+            if (last.length() == 0) {
+                return "I do not have a recent conversation request stored yet.";
+            }
+            return "The last thing I have in recent conversation memory is: " + last;
+        }
+        return null;
+    }
+
+    private static String handleFollowUpAICommand(Context context, String command, String lower, JarvisOutput output) {
+        if (!isLikelyAIContinuation(lower)) {
+            return null;
+        }
+        String last = JarvisConversationMemory.getPreviousUserRequest(context, command);
+        if (last.length() == 0) {
+            return null;
+        }
+        if (!JarvisOnlineBrain.hasApiKey(context)) {
+            return "That sounds like a follow-up to an earlier request, but I need an AI key before I can continue from conversation context.";
+        }
+        startAIRequest(context, command, lower, output);
+        if (JarvisProjectPackager.looksLikeProjectZipRequest(lower) || lower.indexOf("zip") >= 0 || lower.indexOf("package") >= 0) {
+            return "Using the previous request as context and building the packaged project now.";
+        }
+        return "Using the previous conversation context.";
+    }
+
+    private static boolean isLikelyAIContinuation(String lower) {
+        if (lower == null) {
+            return false;
+        }
+        String value = lower.trim();
+        if (value.length() == 0) {
+            return false;
+        }
+        if (!JarvisConversationMemory.looksLikeFollowUpReference(value)) {
+            return false;
+        }
+        if (startsWithAny(value, new String[] { "open ", "launch ", "start ", "play ", "pause ", "stop ", "mute ", "unmute ", "volume ", "call ", "dial ", "navigate ", "directions " })) {
+            return false;
+        }
+        return containsAny(value, new String[] { "zip", "package", "packaged", "project", "app", "code", "file", "files", "full", "complete", "instead", "change", "make it", "put it", "need it", "that project", "that app", "previous" });
+    }
+
+    private static void startAIRequest(Context context, String command, String lower, JarvisOutput output) {
+        String prompt = command == null ? "" : command;
+        String low = lower == null ? prompt.toLowerCase(Locale.UK) : lower;
+        if (JarvisConversationMemory.looksLikeFollowUpReference(low)) {
+            prompt = JarvisConversationMemory.buildFollowUpPrompt(context, prompt);
+        }
+        if (JarvisCodeTools.looksLikeCodeRequest(low) && !JarvisProjectPackager.looksLikeProjectZipRequest(low) && output != null) {
+            output.onClearCodeSnippet();
+        }
+        JarvisOnlineBrain.requestChat(context, prompt, output);
     }
 
     private static String handleConversationCommand(Context context, String lower) {
@@ -2184,6 +2301,143 @@ public final class JarvisCommandCenter {
             }
         }
         return result;
+    }
+
+    private static String handleHighPriorityProjectOrCodeAI(Context context, String command, String lower, JarvisOutput output) {
+        if (!shouldRouteBeforeLocalActions(lower)) {
+            return null;
+        }
+        if (JarvisOnlineBrain.hasApiKey(context)) {
+            startAIRequest(context, command, lower, output);
+            return getAIWorkingMessage(lower);
+        }
+        return "That sounds like a project or code generation request, not a local phone command. Import an AI key first, then I can build it for you.";
+    }
+
+    private static String getAIWorkingMessage(String lower) {
+        if (JarvisProjectPackager.looksLikeProjectZipRequest(lower)) {
+            return "Building the packaged project now.";
+        }
+        if (JarvisCodeTools.looksLikeCodeRequest(lower)) {
+            return "Working on the full code now.";
+        }
+        return "Thinking.";
+    }
+
+    private static boolean shouldRouteBeforeLocalActions(String lower) {
+        if (lower == null) {
+            return false;
+        }
+        String value = lower.trim();
+        if (value.length() == 0) {
+            return false;
+        }
+        if (isClearCodeSnippetCommand(value) || isSavePendingProjectCommand(value)) {
+            return false;
+        }
+        if (startsWithAny(value, new String[] { "open ", "launch ", "start ", "play ", "pause ", "stop ", "mute ", "unmute ", "volume ", "call ", "dial ", "navigate ", "directions " })) {
+            return false;
+        }
+        if (JarvisProjectPackager.looksLikeProjectZipRequest(value)) {
+            return containsAny(value, new String[] {
+                    "give me", "create", "make", "build", "generate", "write", "full", "complete", "project", "aide", "android app", "java app", "game project", "weather app", "example"
+            });
+        }
+        if (JarvisCodeTools.looksLikeCodeRequest(value)) {
+            return containsAny(value, new String[] {
+                    "give me", "write me", "create me", "make me", "build me", "generate", "code for", "example", "snippet", "project", "app project", "java", "aide", "android java"
+            });
+        }
+        return false;
+    }
+
+    private static boolean startsWithAny(String value, String[] needles) {
+        if (value == null || needles == null) {
+            return false;
+        }
+        for (int i = 0; i < needles.length; i++) {
+            if (needles[i] != null && value.startsWith(needles[i])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean shouldSendToAI(String lower) {
+        if (lower == null) {
+            return false;
+        }
+        String value = lower.trim();
+        if (value.length() == 0) {
+            return false;
+        }
+        if (JarvisCodeTools.looksLikeCodeRequest(value)) {
+            return true;
+        }
+        return containsAny(value, new String[] {
+                "explain ",
+                "summarise ",
+                "summarize ",
+                "rewrite ",
+                "write me ",
+                "create me ",
+                "make me ",
+                "draft ",
+                "compose ",
+                "translate ",
+                "help me ",
+                "teach me ",
+                "tell me about ",
+                "compare ",
+                "calculate ",
+                "plan ",
+                "give me ",
+                "generate ",
+                "build me ",
+                "how would i ",
+                "what would i "
+        });
+    }
+
+    private static boolean isClearCodeSnippetCommand(String lower) {
+        if (lower == null) {
+            return false;
+        }
+        String value = lower.trim();
+        if (value.equals("clear code") || value.equals("clear snippet") || value.equals("hide code") || value.equals("remove code")) {
+            return true;
+        }
+        return containsAny(value, new String[] {
+                "clear code snippet",
+                "clear code box",
+                "clear code window",
+                "remove code snippet",
+                "remove the code snippet",
+                "hide code snippet",
+                "hide the code snippet",
+                "delete code snippet",
+                "dismiss code snippet"
+        });
+    }
+
+    private static boolean isSavePendingProjectCommand(String lower) {
+        if (lower == null) {
+            return false;
+        }
+        String value = lower.trim();
+        if (value.equals("save project zip") || value.equals("save project") || value.equals("save generated project")) {
+            return true;
+        }
+        return containsAny(value, new String[] {
+                "save the project zip",
+                "save generated project zip",
+                "choose where to save project",
+                "choose save location",
+                "open save project picker",
+                "save last project",
+                "save pending project",
+                "save packaged project"
+        });
     }
 
     private static boolean isQuestion(String lower) {
