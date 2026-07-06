@@ -5,6 +5,14 @@
 </p>
 
 <p align="center">
+<b>GET API KEY HERE</b>
+https://bazaarlink.ai/
+Then 
+  "OPEN AI SETTINGS/SETUP AI"
+  COPY FROM CLIPBOARD, VERIFY KEY IS ACTIVE, CLOSE SETUP, ENJOY
+</p>
+
+<p align="center">
   <b>A lightweight Android voice assistant with a cinematic J.A.R.V.I.S-style HUD, wake phrase control, app launching, phone navigation, media controls, search, maps, and background listening.</b>
 </p>
 
