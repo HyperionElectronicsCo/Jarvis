@@ -3,22 +3,31 @@ package com.hyperion.jarvis;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.provider.Settings;
+import android.util.Base64;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
+import java.util.regex.Pattern;
+import java.util.regex.Matcher;
+import java.util.LinkedHashSet;
+import java.util.ArrayList;
+import java.net.URLDecoder;
 import java.util.Locale;
+import java.util.Iterator;
 
 public final class JarvisOnlineBrain {
     private static final String PREF_OPENAI_KEY = "openai_api_key";
@@ -33,6 +42,23 @@ public final class JarvisOnlineBrain {
     private static final String DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
     private static final String BAZAARLINK_BASE_URL = "https://bazaarlink.ai/api/v1";
     private static final String DEFAULT_MODEL = "gpt-4o-mini";
+    private static final String DEFAULT_IMAGE_MODEL = "gpt-image-1";
+    private static final String POLLINATIONS_IMAGE_BASE_URL = "https://image.pollinations.ai/prompt/";
+    private static final String POLLINATIONS_IMAGE_ALT_URL = "https://pollinations.ai/p/";
+    private static final String POLLINATIONS_TEXT_OPENAI_URL = "https://text.pollinations.ai/openai";
+    private static final String PREF_LAST_WEB_IMAGE_QUERY = "last_web_image_query_v43";
+    private static final String PREF_LAST_WEB_IMAGE_INDEX = "last_web_image_index_v43";
+    private static final String GOOGLE_IMAGE_SEARCH_URL = "https://www.google.com/search?tbm=isch&hl=en&safe=off&q=";
+    private static final String GOOGLE_IMAGE_SEARCH_ALT_URL = "https://www.google.com/search?udm=2&hl=en&safe=off&q=";
+    private static final String BING_IMAGE_SEARCH_URL = "https://www.bing.com/images/search?q=";
+    private static final String DUCK_IMAGE_SEARCH_PAGE_URL = "https://duckduckgo.com/?iax=images&ia=images&q=";
+    private static final String DUCK_IMAGE_API_URL = "https://duckduckgo.com/i.js?l=us-en&o=json&f=,,,&p=1&q=";
+    private static final String WIKIMEDIA_IMAGE_SEARCH_URL = "https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrlimit=14&prop=imageinfo&iiprop=url|mime&iiurlwidth=1024&format=json&origin=*&gsrsearch=";
+    private static final String WIKIPEDIA_PAGE_IMAGE_URL = "https://en.wikipedia.org/w/api.php?action=query&prop=pageimages|info&inprop=url&piprop=thumbnail&pithumbsize=1200&redirects=1&format=json&titles=";
+
+    public interface VisionCallback {
+        void onVisionResult(String text);
+    }
     public static final String MODEL_GPT_4O_MINI = "gpt-4o-mini";
     public static final String MODEL_GPT_41_MINI = "gpt-4.1-mini";
     public static final String MODEL_GPT_4O = "gpt-4o";
@@ -226,7 +252,7 @@ public final class JarvisOnlineBrain {
             connection.setReadTimeout(16000);
             connection.setRequestMethod("GET");
             connection.setRequestProperty("Authorization", "Bearer " + key.trim());
-            connection.setRequestProperty("User-Agent", "JarvisAIDE/1.31 Android");
+            connection.setRequestProperty("User-Agent", "JarvisAIDE/1.4.4 Android");
             int code = connection.getResponseCode();
             InputStream input;
             if (code >= 400) {
@@ -350,6 +376,10 @@ public final class JarvisOnlineBrain {
 
     public static String getChatCompletionsUrl(Context context) {
         return getBaseUrl(context) + "/chat/completions";
+    }
+
+    public static String getImageGenerationsUrl(Context context) {
+        return getBaseUrl(context) + "/images/generations";
     }
 
     public static String getModelsUrl(Context context) {
@@ -588,45 +618,28 @@ public final class JarvisOnlineBrain {
         final Context appContext = context.getApplicationContext();
         new AsyncTask<Void, Void, String>() {
             protected String doInBackground(Void... params) {
+                String providerError = "";
                 try {
                     String key = getActiveApiKey(appContext);
-                    if (key == null || key.trim().length() == 0) {
-                        return "Chat AI is not configured. Type: set ai key YOUR_API_KEY, or copy keys and type: import ai keys from clipboard. You can also type: set ai model MODEL_NAME.";
-                    }
-                    String model = getModel(appContext);
-                    JSONObject body = new JSONObject();
-                    body.put("model", model);
-                    JSONArray messages = new JSONArray();
-                    JSONObject system = new JSONObject();
-                    system.put("role", "system");
-                    system.put("content", buildSystemPrompt(prompt));
-                    messages.put(system);
-                    JSONObject user = new JSONObject();
-                    user.put("role", "user");
-                    user.put("content", buildUserPrompt(appContext, prompt));
-                    messages.put(user);
-                    body.put("messages", messages);
-                    body.put("temperature", 0.55);
-                    body.put("max_tokens", 6000);
-                    String response = postJson(getChatCompletionsUrl(appContext), body.toString(), key.trim());
-                    JSONObject json = new JSONObject(response);
-                    if (json.has("error")) {
-                        JSONObject error = json.getJSONObject("error");
-                        return "The AI service returned an error: " + error.optString("message", "unknown error");
-                    }
-                    JSONArray choices = json.optJSONArray("choices");
-                    if (choices != null && choices.length() > 0) {
-                        JSONObject message = choices.getJSONObject(0).optJSONObject("message");
-                        if (message != null) {
-                            String content = message.optString("content", "").trim();
-                            if (content.length() > 0) {
-                                return content;
-                            }
+                    if (key != null && key.trim().length() > 0) {
+                        try {
+                            return requestChatFromEndpoint(appContext, getChatCompletionsUrl(appContext), key.trim(), getModel(appContext), prompt, 6000);
+                        } catch (Exception providerException) {
+                            providerError = safeMessage(providerException);
                         }
+                    } else {
+                        providerError = "No active AI key was configured.";
                     }
-                    return "The AI service responded, but I could not read the answer.";
+
+                    String fallbackResult = requestChatFromAnonymousFallbacks(appContext, prompt);
+                    if (fallbackResult != null && fallbackResult.trim().length() > 0) {
+                        return fallbackResult;
+                    }
+
+                    return buildFriendlyAiFailure(providerError, "The free anonymous fallback did not return an answer.");
                 } catch (Exception error) {
-                    return "AI request failed: " + safeMessage(error);
+                    String message = safeMessage(error);
+                    return buildFriendlyAiFailure(providerError, message);
                 }
             }
 
@@ -637,6 +650,181 @@ public final class JarvisOnlineBrain {
         }.execute();
     }
 
+    private static String requestChatFromAnonymousFallbacks(Context context, String prompt) throws Exception {
+        String errors = "";
+
+        String[] pollinationsModels = getPollinationsChatModels();
+        for (int i = 0; i < pollinationsModels.length; i++) {
+            try {
+                String result = requestChatFromEndpoint(context, POLLINATIONS_TEXT_OPENAI_URL, "", pollinationsModels[i], prompt, 1800);
+                if (result != null && result.trim().length() > 0) {
+                    return result;
+                }
+            } catch (Exception error) {
+                String message = safeMessage(error);
+                if (isAnonymousQueueOrRateLimit(message)) {
+                    errors = appendError(errors, "Pollinations is currently busy or rate-limited");
+                    break;
+                }
+                errors = appendError(errors, "Pollinations " + pollinationsModels[i] + ": " + message);
+            }
+        }
+
+        try {
+            String direct = requestPollinationsTextDirect(context, prompt);
+            if (direct != null && direct.trim().length() > 0) {
+                return direct;
+            }
+        } catch (Exception directError) {
+            errors = appendError(errors, "Pollinations direct text fallback: " + safeMessage(directError));
+        }
+
+        throw new Exception(buildAnonymousFallbackSummary(errors));
+    }
+
+    private static String requestPollinationsTextDirect(Context context, String prompt) throws Exception {
+        String safePrompt = buildSystemPrompt(prompt) + "\n\nUser request:\n" + buildUserPrompt(context, prompt);
+        if (safePrompt.length() > 3600) {
+            safePrompt = safePrompt.substring(0, 3600);
+        }
+        String address = "https://text.pollinations.ai/" + safeUrlEncode(safePrompt)
+                + "?model=openai-fast&private=true&json=false";
+        String response = downloadText(address);
+        String cleaned = response == null ? "" : response.trim();
+        if (cleaned.length() == 0) {
+            throw new Exception("empty response");
+        }
+        String lower = cleaned.toLowerCase(Locale.US);
+        if (isAnonymousQueueOrRateLimit(lower)) {
+            throw new Exception("free fallback is busy or rate-limited");
+        }
+        if (cleaned.startsWith("{") && cleaned.indexOf("error") >= 0) {
+            throw new Exception(extractApiErrorMessage(cleaned));
+        }
+        return cleaned;
+    }
+
+    private static boolean isAnonymousQueueOrRateLimit(String message) {
+        if (message == null) {
+            return false;
+        }
+        String lower = message.toLowerCase(Locale.US);
+        return lower.indexOf("queue full") >= 0
+                || lower.indexOf("already queued") >= 0
+                || lower.indexOf("rate limit") >= 0
+                || lower.indexOf("too many") >= 0
+                || lower.indexOf("insufficient credits") >= 0
+                || lower.indexOf("top up") >= 0
+                || lower.indexOf("get unlimited") >= 0
+                || lower.indexOf("does not exist") >= 0
+                || lower.indexOf("no readable answer") >= 0;
+    }
+
+    private static String buildAnonymousFallbackSummary(String errors) {
+        StringBuilder builder = new StringBuilder();
+        builder.append("The configured AI provider could not answer, and the free anonymous fallback is currently unavailable. ");
+        builder.append("This normally means the API key has no credits, the free queue is full, or the anonymous provider is rate-limiting requests. ");
+        builder.append("Open AI setup and import a working key/provider, or try again later. ");
+        if (errors != null && errors.trim().length() > 0) {
+            builder.append("Technical detail: ").append(cleanFallbackErrorForDisplay(errors));
+        }
+        return builder.toString();
+    }
+
+    private static String buildFriendlyAiFailure(String providerError, String fallbackError) {
+        StringBuilder builder = new StringBuilder();
+        builder.append("AI request failed. ");
+        if (providerError != null && providerError.trim().length() > 0) {
+            builder.append("Provider issue: ").append(cleanFallbackErrorForDisplay(providerError)).append(". ");
+        }
+        if (fallbackError != null && fallbackError.trim().length() > 0) {
+            builder.append("Free fallback issue: ").append(cleanFallbackErrorForDisplay(fallbackError)).append(". ");
+        }
+        builder.append("Open AI setup, switch to a working provider/key, or try again later when the free service is not busy.");
+        return builder.toString();
+    }
+
+    private static String cleanFallbackErrorForDisplay(String message) {
+        if (message == null) {
+            return "unknown error";
+        }
+        String cleaned = message.replace('\n', ' ').replace('\r', ' ').trim();
+        while (cleaned.indexOf("  ") >= 0) {
+            cleaned = cleaned.replace("  ", " ");
+        }
+        String lower = cleaned.toLowerCase(Locale.US);
+        if (lower.indexOf("insufficient credits") >= 0 || lower.indexOf("top up") >= 0) {
+            return "the configured provider has insufficient credits";
+        }
+        if (lower.indexOf("queue full") >= 0 || lower.indexOf("already queued") >= 0) {
+            return "the free anonymous queue is full";
+        }
+        if (lower.indexOf("does not exist") >= 0) {
+            return "one anonymous fallback model is no longer available";
+        }
+        if (lower.indexOf("no readable answer") >= 0) {
+            return "the anonymous service responded but returned no readable answer";
+        }
+        if (cleaned.length() > 260) {
+            cleaned = cleaned.substring(0, 260).trim() + "...";
+        }
+        return cleaned;
+    }
+
+    private static String requestChatFromEndpoint(Context context, String url, String apiKey, String model, String prompt, int maxTokens) throws Exception {
+        JSONObject body = new JSONObject();
+        body.put("model", model == null || model.length() == 0 ? DEFAULT_MODEL : model);
+        JSONArray messages = new JSONArray();
+        JSONObject system = new JSONObject();
+        system.put("role", "system");
+        system.put("content", buildSystemPrompt(prompt));
+        messages.put(system);
+        JSONObject user = new JSONObject();
+        user.put("role", "user");
+        user.put("content", buildUserPrompt(context, prompt));
+        messages.put(user);
+        body.put("messages", messages);
+        body.put("temperature", 0.55);
+        body.put("max_tokens", maxTokens <= 0 ? 2400 : maxTokens);
+        String response = postJson(url, body.toString(), apiKey == null ? "" : apiKey);
+        return extractChatAnswerOrThrow(response);
+    }
+
+    private static String extractChatAnswerOrThrow(String response) throws Exception {
+        JSONObject json = new JSONObject(response == null ? "" : response);
+        if (json.has("error")) {
+            JSONObject error = json.optJSONObject("error");
+            if (error != null) {
+                String message = error.optString("message", "unknown error");
+                throw new Exception(message);
+            }
+            throw new Exception(json.optString("error", "unknown error"));
+        }
+        JSONArray choices = json.optJSONArray("choices");
+        if (choices != null && choices.length() > 0) {
+            JSONObject choice = choices.getJSONObject(0);
+            JSONObject message = choice.optJSONObject("message");
+            if (message != null) {
+                String content = message.optString("content", "").trim();
+                if (content.length() > 0) {
+                    return content;
+                }
+            }
+            String text = choice.optString("text", "").trim();
+            if (text.length() > 0) {
+                return text;
+            }
+        }
+        throw new Exception("the service responded but no readable answer was returned");
+    }
+
+    private static String[] getPollinationsChatModels() {
+        return new String[] {
+                "openai-fast",
+                "openai",
+                "mistral"
+        };
+    }
 
     private static String buildSystemPrompt(String prompt) {
         String base = "You are JARVIS inside an Android assistant app. Be helpful, detailed and practical. The user may speak naturally without saying ask AI. Use recent conversation memory to understand follow-up requests and corrections. Never give tiny placeholder snippets when the user asks for code. For code requests, provide complete usable code, imports, manifest/build files when relevant, and short setup instructions. Do not say omitted for brevity unless the provider response limit prevents completion. If controlling the phone is needed, explain what Jarvis command the user can say.";
@@ -925,7 +1113,1467 @@ public final class JarvisOnlineBrain {
         return "****" + key.substring(key.length() - 4);
     }
 
-    private static void deliver(JarvisOutput output, String text) {
+
+
+
+public static void requestImageGeneration(final Context context, final String prompt, final JarvisOutput output) {
+    final Context appContext = context.getApplicationContext();
+    new AsyncTask<Void, Void, String>() {
+        private byte[] imageBytes;
+        private String mimeType = "image/png";
+        private String suggestedFileName = "jarvis_image.png";
+
+        protected String doInBackground(Void... params) {
+            String key = getActiveApiKey(appContext);
+            String providerError = "";
+            String freeError = "";
+            String searchError = "";
+            suggestedFileName = buildImageFileName(prompt);
+
+            if (key != null && key.trim().length() > 0) {
+                String[] models = getImageGenerationModelFallbacks(appContext);
+                for (int i = 0; i < models.length; i++) {
+                    String model = models[i];
+                    try {
+                        byte[] bytes = performOpenAiStyleImageGeneration(appContext, prompt, key.trim(), model);
+                        if (bytes != null && bytes.length > 0) {
+                            imageBytes = bytes;
+                            mimeType = "image/png";
+                            return null;
+                        }
+                    } catch (Exception error) {
+                        providerError = appendError(providerError, model + ": " + safeMessage(error));
+                    }
+                }
+            } else {
+                providerError = "No active AI key was configured.";
+            }
+
+            String[] freeUrls = buildFreeImageGenerationUrls(prompt);
+            for (int i = 0; i < freeUrls.length; i++) {
+                try {
+                    byte[] bytes = downloadBinary(freeUrls[i]);
+                    if (looksLikeImageBytes(bytes)) {
+                        imageBytes = bytes;
+                        mimeType = guessImageMimeType(bytes);
+                        return null;
+                    }
+                    freeError = appendError(freeError, "free endpoint " + (i + 1) + " did not return an image");
+                } catch (Exception error) {
+                    freeError = appendError(freeError, "free endpoint " + (i + 1) + ": " + safeMessage(error));
+                }
+            }
+
+            try {
+                WebImageResult webResult = loadWebImageResult(prompt, 0);
+                if (webResult != null && webResult.imageBytes != null && webResult.imageBytes.length > 0) {
+                    imageBytes = webResult.imageBytes;
+                    mimeType = webResult.mimeType;
+                    suggestedFileName = webResult.suggestedFileName;
+                    rememberImageSearch(appContext, prompt, webResult.resultIndex);
+                    return null;
+                }
+            } catch (Exception error) {
+                searchError = safeMessage(error);
+            }
+
+            StringBuilder message = new StringBuilder();
+            message.append("Image generation failed after trying provider models, free fallbacks and web image search.");
+            if (providerError != null && providerError.length() > 0) {
+                message.append(" Provider: ").append(providerError).append('.');
+            }
+            if (freeError != null && freeError.length() > 0) {
+                message.append(" Free fallback: ").append(freeError).append('.');
+            }
+            if (searchError != null && searchError.length() > 0) {
+                message.append(" Web image fallback: ").append(searchError).append('.');
+            }
+            return message.toString();
+        }
+
+        protected void onPostExecute(String errorMessage) {
+            if (errorMessage != null) {
+                deliver(output, errorMessage);
+            } else if (output != null) {
+                output.onImageGenerated(imageBytes, mimeType, suggestedFileName);
+            }
+        }
+    }.execute();
+}
+
+public static void requestSearchImage(final Context context, final String query, final JarvisOutput output) {
+    requestSearchImageInternal(context, query, 0, output);
+}
+
+public static boolean requestNextSearchImage(final Context context, final JarvisOutput output) {
+    if (context == null) {
+        return false;
+    }
+    String query = getRememberedImageSearchQuery(context);
+    if (query == null || query.trim().length() == 0) {
+        return false;
+    }
+    int nextIndex = getRememberedImageSearchIndex(context) + 1;
+    requestSearchImageInternal(context, query, nextIndex, output);
+    return true;
+}
+
+private static void requestSearchImageInternal(final Context context, final String query, final int requestedIndex, final JarvisOutput output) {
+    final Context appContext = context.getApplicationContext();
+    new AsyncTask<Void, Void, String>() {
+        private byte[] imageBytes;
+        private String mimeType = "image/png";
+        private String suggestedFileName = "jarvis_image.png";
+
+        protected String doInBackground(Void... params) {
+            try {
+                WebImageResult result = loadWebImageResult(query, requestedIndex);
+                imageBytes = result.imageBytes;
+                mimeType = result.mimeType;
+                suggestedFileName = result.suggestedFileName;
+                rememberImageSearch(appContext, query, result.resultIndex);
+                return null;
+            } catch (Exception error) {
+                return "I could not display an image for " + query + ". I found image results, but this device/provider would not return usable image bytes. Try saying another one, or try a simpler phrase.";
+            }
+        }
+
+        protected void onPostExecute(String errorMessage) {
+            if (errorMessage != null) {
+                deliver(output, errorMessage);
+            } else if (output != null) {
+                output.onImageGenerated(imageBytes, mimeType, suggestedFileName);
+            }
+        }
+    }.execute();
+}
+
+private static final class WebImageResult {
+    byte[] imageBytes;
+    String mimeType;
+    String suggestedFileName;
+    String sourceUrl;
+    int resultIndex;
+}
+
+private static final class WebImageCandidate {
+    String imageUrl;
+    String sourceUrl;
+    String title;
+    String provider;
+    int score;
+}
+
+private static WebImageResult loadWebImageResult(String query, int requestedIndex) throws Exception {
+    if (query == null || query.trim().length() == 0) {
+        throw new Exception("No image search query was supplied.");
+    }
+    ArrayList<WebImageCandidate> candidates = collectWebImageCandidates(query);
+    if (candidates == null || candidates.size() == 0) {
+        throw new Exception("No relevant web image results were found.");
+    }
+    int startIndex = requestedIndex < 0 ? 0 : requestedIndex;
+    if (startIndex >= candidates.size()) {
+        startIndex = startIndex % candidates.size();
+    }
+    Exception lastError = null;
+    for (int offset = 0; offset < candidates.size(); offset++) {
+        int actualIndex = (startIndex + offset) % candidates.size();
+        WebImageCandidate candidate = candidates.get(actualIndex);
+        if (candidate == null || candidate.imageUrl == null || candidate.imageUrl.length() == 0) {
+            continue;
+        }
+        if (!isAcceptableImageCandidate(candidate, query)) {
+            continue;
+        }
+        try {
+            byte[] bytes = downloadImageCandidate(candidate.imageUrl);
+            WebImageResult result = new WebImageResult();
+            result.imageBytes = bytes;
+            result.mimeType = guessImageMimeType(bytes);
+            result.suggestedFileName = buildImageFileName(query);
+            result.sourceUrl = candidate.sourceUrl != null && candidate.sourceUrl.length() > 0 ? candidate.sourceUrl : candidate.imageUrl;
+            result.resultIndex = actualIndex;
+            return result;
+        } catch (Exception error) {
+            lastError = error;
+        }
+    }
+    if (lastError != null) {
+        throw new Exception("Image search found candidates, but none were relevant and displayable.");
+    }
+    throw new Exception("No downloadable web image was found.");
+}
+
+private static ArrayList<WebImageCandidate> collectWebImageCandidates(String query) throws Exception {
+    ArrayList<WebImageCandidate> raw = new ArrayList<WebImageCandidate>();
+    String[] variants = buildImageSearchQueries(query);
+    for (int i = 0; i < variants.length; i++) {
+        String variant = variants[i];
+        try {
+            addWikipediaPageImageCandidates(raw, variant);
+        } catch (Exception ignored) {
+        }
+        try {
+            addWikimediaImageCandidates(raw, variant);
+        } catch (Exception ignored) {
+        }
+        try {
+            addDuckDuckGoImageCandidates(raw, variant);
+        } catch (Exception ignored) {
+        }
+        String encoded = safeUrlEncode(variant);
+        try {
+            addImageCandidatesFromPage(raw, GOOGLE_IMAGE_SEARCH_ALT_URL + encoded, "google");
+        } catch (Exception ignored) {
+        }
+        try {
+            addImageCandidatesFromPage(raw, GOOGLE_IMAGE_SEARCH_URL + encoded, "google");
+        } catch (Exception ignored) {
+        }
+        try {
+            addImageCandidatesFromPage(raw, BING_IMAGE_SEARCH_URL + encoded, "bing");
+        } catch (Exception ignored) {
+        }
+        if (raw.size() >= 72) {
+            break;
+        }
+    }
+    return rankImageCandidates(raw, query);
+}
+
+private static String[] buildImageSearchQueries(String query) {
+    LinkedHashSet<String> values = new LinkedHashSet<String>();
+    String clean = query == null ? "" : query.trim();
+    if (clean.length() == 0) {
+        clean = "jarvis image";
+    }
+    String subject = stripLeadingArticle(clean);
+    if (subject.length() == 0) {
+        subject = clean;
+    }
+    values.add(clean);
+    values.add(subject);
+
+    String lower = subject.toLowerCase(Locale.US);
+    if (lower.indexOf("tom") >= 0 && lower.indexOf("jerry") >= 0) {
+        values.add("Tom and Jerry cartoon");
+        values.add("Tom and Jerry cartoon characters");
+        values.add("Tom and Jerry official art");
+    } else if (lower.indexOf("rhino") >= 0 || lower.indexOf("rhinoceros") >= 0) {
+        values.add(subject + " animal");
+        values.add("rhinoceros animal");
+        values.add(subject + " wildlife");
+    } else if (lower.indexOf("labrador") >= 0) {
+        values.add(subject + " dog");
+        values.add(subject + " puppy");
+    } else if (lower.indexOf("puppy") >= 0 || lower.indexOf("dog") >= 0) {
+        values.add(subject + " dog photo");
+    } else if (lower.indexOf("smartphone") >= 0 || lower.indexOf("phone") >= 0) {
+        values.add(subject + " device");
+    } else if (isLikelyLocationQuery(subject)) {
+        values.add(subject + " country");
+        values.add(subject + " landscape");
+        values.add(subject + " travel");
+        values.add(subject + " skyline");
+    } else {
+        values.add(subject + " photo");
+        values.add(subject + " picture");
+    }
+    return values.toArray(new String[values.size()]);
+}
+
+private static String stripLeadingArticle(String value) {
+    if (value == null) {
+        return "";
+    }
+    String clean = value.trim();
+    String lower = clean.toLowerCase(Locale.US);
+    if (lower.startsWith("the ")) {
+        return clean.substring(4).trim();
+    }
+    if (lower.startsWith("a ")) {
+        return clean.substring(2).trim();
+    }
+    if (lower.startsWith("an ")) {
+        return clean.substring(3).trim();
+    }
+    return clean;
+}
+
+private static void addWikipediaPageImageCandidates(ArrayList<WebImageCandidate> results, String query) throws Exception {
+    if (results == null || query == null || query.trim().length() == 0) {
+        return;
+    }
+    String subject = stripLeadingArticle(query);
+    if (subject.length() == 0) {
+        subject = query.trim();
+    }
+    String json = downloadText(WIKIPEDIA_PAGE_IMAGE_URL + safeUrlEncode(subject));
+    try {
+        JSONObject root = new JSONObject(json);
+        JSONObject rootQuery = root.optJSONObject("query");
+        JSONObject pages = rootQuery == null ? null : rootQuery.optJSONObject("pages");
+        if (pages != null) {
+            Iterator<String> keys = pages.keys();
+            while (keys.hasNext()) {
+                String key = keys.next();
+                JSONObject page = pages.optJSONObject(key);
+                if (page == null) {
+                    continue;
+                }
+                String title = page.optString("title", "");
+                JSONObject thumb = page.optJSONObject("thumbnail");
+                String image = thumb == null ? "" : thumb.optString("source", "");
+                String source = page.optString("fullurl", "");
+                if (image != null && image.length() > 0) {
+                    addCandidate(results, image, source, title, "wikipedia");
+                }
+            }
+        }
+    } catch (Exception ignored) {
+    }
+}
+
+private static void addWikimediaImageCandidates(ArrayList<WebImageCandidate> results, String query) throws Exception {
+    if (results == null || query == null || query.trim().length() == 0) {
+        return;
+    }
+    String json = downloadText(WIKIMEDIA_IMAGE_SEARCH_URL + safeUrlEncode(query));
+    try {
+        JSONObject root = new JSONObject(json);
+        JSONObject rootQuery = root.optJSONObject("query");
+        JSONObject pages = rootQuery == null ? null : rootQuery.optJSONObject("pages");
+        if (pages != null) {
+            java.util.Iterator<String> keys = pages.keys();
+            while (keys.hasNext()) {
+                String key = keys.next();
+                JSONObject page = pages.optJSONObject(key);
+                if (page == null) {
+                    continue;
+                }
+                String title = page.optString("title", "");
+                JSONArray info = page.optJSONArray("imageinfo");
+                if (info == null || info.length() == 0) {
+                    continue;
+                }
+                JSONObject first = info.optJSONObject(0);
+                if (first == null) {
+                    continue;
+                }
+                String image = first.optString("thumburl", "");
+                if (image == null || image.length() == 0) {
+                    image = first.optString("url", "");
+                }
+                addCandidate(results, image, first.optString("descriptionurl", ""), title, "wikimedia");
+            }
+            if (results.size() > 0) {
+                return;
+            }
+        }
+    } catch (Exception ignored) {
+    }
+    collectJsonImageCandidates(results, json, "\\\"thumburl\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"", "wikimedia");
+    collectJsonImageCandidates(results, json, "\"thumburl\"\\s*:\\s*\"([^\"]+)\"", "wikimedia");
+    collectJsonImageCandidates(results, json, "\\\"url\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"", "wikimedia");
+    collectJsonImageCandidates(results, json, "\"url\"\\s*:\\s*\"([^\"]+)\"", "wikimedia");
+}
+
+private static void addDuckDuckGoImageCandidates(ArrayList<WebImageCandidate> results, String query) throws Exception {
+    if (results == null || query == null || query.trim().length() == 0) {
+        return;
+    }
+    String encoded = safeUrlEncode(query);
+    String page = downloadText(DUCK_IMAGE_SEARCH_PAGE_URL + encoded);
+    String vqd = extractDuckDuckGoVqd(page);
+    if (vqd == null || vqd.length() == 0) {
+        return;
+    }
+    String json = downloadText(DUCK_IMAGE_API_URL + encoded + "&vqd=" + safeUrlEncode(vqd));
+    try {
+        JSONObject root = new JSONObject(json);
+        JSONArray array = root.optJSONArray("results");
+        if (array == null) {
+            array = root.optJSONArray("data");
+        }
+        if (array != null) {
+            for (int i = 0; i < array.length(); i++) {
+                JSONObject item = array.optJSONObject(i);
+                if (item == null) {
+                    continue;
+                }
+                String title = item.optString("title", "");
+                String sourceUrl = item.optString("url", "");
+                String image = item.optString("image", "");
+                String thumb = item.optString("thumbnail", "");
+                if (image != null && image.length() > 0) {
+                    addCandidate(results, image, sourceUrl, title, "duckduckgo");
+                }
+                if ((image == null || image.length() == 0) && thumb != null && thumb.length() > 0) {
+                    addCandidate(results, thumb, sourceUrl, title, "duckduckgo");
+                }
+            }
+            if (results.size() > 0) {
+                return;
+            }
+        }
+    } catch (Exception ignored) {
+    }
+    collectJsonImageCandidates(results, json, "\\\"image\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"", "duckduckgo");
+    collectJsonImageCandidates(results, json, "\"image\"\\s*:\\s*\"([^\"]+)\"", "duckduckgo");
+    collectJsonImageCandidates(results, json, "\\\"thumbnail\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"", "duckduckgo");
+    collectJsonImageCandidates(results, json, "\"thumbnail\"\\s*:\\s*\"([^\"]+)\"", "duckduckgo");
+}
+
+private static String extractDuckDuckGoVqd(String page) {
+    if (page == null) {
+        return "";
+    }
+    String[] regexes = new String[] {
+            "vqd=\\\"([^\\\"]+)\\\"",
+            "vqd='([^']+)'",
+            "\\\"vqd\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"",
+            "vqd=([^&\\\"']+)"
+    };
+    for (int i = 0; i < regexes.length; i++) {
+        try {
+            Matcher matcher = Pattern.compile(regexes[i]).matcher(page);
+            if (matcher.find()) {
+                return matcher.group(1);
+            }
+        } catch (Exception ignored) {
+        }
+    }
+    return "";
+}
+
+private static ArrayList<WebImageCandidate> rankImageCandidates(ArrayList<WebImageCandidate> candidates, String query) {
+    ArrayList<WebImageCandidate> ranked = new ArrayList<WebImageCandidate>();
+    if (candidates == null || candidates.size() == 0) {
+        return ranked;
+    }
+
+    boolean haveStrongCandidate = false;
+    for (int i = 0; i < candidates.size(); i++) {
+        WebImageCandidate candidate = candidates.get(i);
+        if (candidate == null) {
+            continue;
+        }
+        candidate.score = imageCandidateScore(candidate, query);
+        if (isStrongQueryCandidate(candidate, query)) {
+            haveStrongCandidate = true;
+        }
+    }
+
+    for (int i = 0; i < candidates.size(); i++) {
+        WebImageCandidate candidate = candidates.get(i);
+        if (candidate == null || candidate.imageUrl == null || candidate.imageUrl.length() == 0) {
+            continue;
+        }
+        if (isKnownPoorImageFallback(candidate.imageUrl)) {
+            continue;
+        }
+        if (haveStrongCandidate && !isStrongQueryCandidate(candidate, query) && candidate.score < 220) {
+            continue;
+        }
+        if (!haveStrongCandidate && candidate.score < 20) {
+            continue;
+        }
+        insertCandidateByScore(ranked, candidate);
+        if (ranked.size() >= 32) {
+            break;
+        }
+    }
+
+    if (ranked.size() == 0) {
+        for (int i = 0; i < candidates.size(); i++) {
+            WebImageCandidate candidate = candidates.get(i);
+            if (candidate == null || candidate.imageUrl == null || candidate.imageUrl.length() == 0) {
+                continue;
+            }
+            if (isKnownPoorImageFallback(candidate.imageUrl)) {
+                continue;
+            }
+            if (candidate.score >= -40) {
+                insertCandidateByScore(ranked, candidate);
+            }
+            if (ranked.size() >= 16) {
+                break;
+            }
+        }
+    }
+    return ranked;
+}
+
+private static void insertCandidateByScore(ArrayList<WebImageCandidate> list, WebImageCandidate candidate) {
+    if (list == null || candidate == null) {
+        return;
+    }
+    int index = 0;
+    while (index < list.size()) {
+        WebImageCandidate existing = list.get(index);
+        int existingScore = existing == null ? -1000 : existing.score;
+        if (candidate.score > existingScore) {
+            break;
+        }
+        index++;
+    }
+    list.add(index, candidate);
+}
+
+private static int imageCandidateScore(WebImageCandidate candidate, String query) {
+    if (candidate == null || candidate.imageUrl == null) {
+        return -1000;
+    }
+    String metadata = buildCandidateSearchText(candidate);
+    String normalized = normalizeSearchText(metadata);
+    String lowerQuery = query == null ? "" : query.toLowerCase(Locale.US);
+
+    int score = 0;
+    if ("wikipedia".equals(candidate.provider)) {
+        score += 90;
+    } else if ("wikimedia".equals(candidate.provider)) {
+        score += 60;
+    } else if ("duckduckgo".equals(candidate.provider)) {
+        score += 50;
+    } else if ("bing".equals(candidate.provider)) {
+        score += 18;
+    } else if ("google".equals(candidate.provider)) {
+        score += 10;
+    }
+
+    if (candidate.title != null && candidate.title.trim().length() > 0) {
+        score += 28;
+    }
+    if (candidate.sourceUrl != null && candidate.sourceUrl.trim().length() > 0) {
+        score += 18;
+    }
+
+    String[] tokens = importantQueryTokens(query);
+    int matches = countMatchedTokens(normalized, tokens);
+    score += matches * 55;
+    if (tokens.length > 0 && matches == tokens.length) {
+        score += 110;
+    }
+
+    String normalizedQuery = normalizeSearchText(query);
+    if (normalizedQuery.length() > 0 && normalized.indexOf(normalizedQuery) >= 0) {
+        score += 140;
+    }
+
+    if (isStrongQueryCandidate(candidate, query)) {
+        score += 220;
+    } else {
+        score -= 120;
+    }
+
+    if (containsTransportKeyword(normalized) && !queryMentionsTransport(lowerQuery)) {
+        score -= 190;
+    }
+    if ((lowerQuery.indexOf("tom") >= 0 && lowerQuery.indexOf("jerry") >= 0)
+            && !(containsWord(normalized, "tom") && containsWord(normalized, "jerry"))) {
+        score -= 260;
+    }
+    if ((lowerQuery.indexOf("rhino") >= 0 || lowerQuery.indexOf("rhinoceros") >= 0)
+            && !(containsWord(normalized, "rhino") || containsWord(normalized, "rhinoceros"))) {
+        score -= 220;
+    }
+    if (lowerQuery.indexOf("labrador") >= 0
+            && !(containsAnyWord(normalized, new String[] { "labrador", "retriever", "dog", "puppy" }))) {
+        score -= 220;
+    }
+    if (lowerQuery.indexOf("tom") >= 0 && lowerQuery.indexOf("jerry") >= 0
+            && (containsWord(normalized, "cartoon") || containsWord(normalized, "animation") || containsWord(normalized, "character"))) {
+        score += 90;
+    }
+    if (isLikelyLocationQuery(query)) {
+        if (containsLocationCue(normalized)) {
+            score += 140;
+        }
+        if (containsTravelOrCountryCue(normalized)) {
+            score += 90;
+        }
+        if (containsLocationPenaltyKeyword(normalized)) {
+            score -= 320;
+        }
+        if (!containsLocationCue(normalized) && !normalized.contains(normalizeSearchText(stripLeadingArticle(query)))) {
+            score -= 160;
+        }
+    }
+    return score;
+}
+
+private static boolean isAcceptableImageCandidate(WebImageCandidate candidate, String query) {
+    if (candidate == null || candidate.imageUrl == null || candidate.imageUrl.length() == 0) {
+        return false;
+    }
+    if (isKnownPoorImageFallback(candidate.imageUrl)) {
+        return false;
+    }
+    if (candidate.score >= 140) {
+        return true;
+    }
+    return isStrongQueryCandidate(candidate, query);
+}
+
+private static String buildCandidateSearchText(WebImageCandidate candidate) {
+    StringBuilder builder = new StringBuilder();
+    if (candidate == null) {
+        return "";
+    }
+    appendSearchText(builder, candidate.title);
+    appendSearchText(builder, candidate.sourceUrl);
+    appendSearchText(builder, candidate.imageUrl);
+    appendSearchText(builder, candidate.provider);
+    return builder.toString().toLowerCase(Locale.US);
+}
+
+private static void appendSearchText(StringBuilder builder, String value) {
+    if (builder == null || value == null || value.length() == 0) {
+        return;
+    }
+    if (builder.length() > 0) {
+        builder.append(' ');
+    }
+    String text = urlDecode(value);
+    if (text == null) {
+        text = value;
+    }
+    builder.append(text);
+}
+
+private static String normalizeSearchText(String value) {
+    if (value == null) {
+        return "";
+    }
+    String normalized = value.toLowerCase(Locale.US);
+    normalized = normalized.replace('&', ' ');
+    normalized = normalized.replaceAll("[^a-z0-9]+", " ");
+    normalized = normalized.replaceAll("\\s+", " ").trim();
+    return normalized;
+}
+
+private static int countMatchedTokens(String normalizedText, String[] tokens) {
+    if (normalizedText == null || tokens == null) {
+        return 0;
+    }
+    int matches = 0;
+    for (int i = 0; i < tokens.length; i++) {
+        if (containsWord(normalizedText, tokens[i])) {
+            matches++;
+        }
+    }
+    return matches;
+}
+
+private static boolean isStrongQueryCandidate(WebImageCandidate candidate, String query) {
+    String normalizedText = normalizeSearchText(buildCandidateSearchText(candidate));
+    String normalizedQuery = normalizeSearchText(query);
+    if (normalizedQuery.length() == 0) {
+        return true;
+    }
+    if (normalizedText.indexOf(normalizedQuery) >= 0) {
+        return true;
+    }
+
+    String lowerQuery = query == null ? "" : query.toLowerCase(Locale.US);
+    if (lowerQuery.indexOf("tom") >= 0 && lowerQuery.indexOf("jerry") >= 0) {
+        return containsWord(normalizedText, "tom") && containsWord(normalizedText, "jerry");
+    }
+    if (lowerQuery.indexOf("rhino") >= 0 || lowerQuery.indexOf("rhinoceros") >= 0) {
+        return containsAnyWord(normalizedText, new String[] { "rhino", "rhinoceros" });
+    }
+    if (lowerQuery.indexOf("labrador") >= 0 || lowerQuery.indexOf("puppy") >= 0 || lowerQuery.indexOf("dog") >= 0) {
+        return containsAnyWord(normalizedText, new String[] { "labrador", "retriever", "dog", "puppy" });
+    }
+    if (isLikelyLocationQuery(query)) {
+        String[] tokens = importantQueryTokens(stripLeadingArticle(query));
+        int matches = countMatchedTokens(normalizedText, tokens);
+        if (containsLocationPenaltyKeyword(normalizedText)) {
+            return false;
+        }
+        return matches >= 1 && (containsLocationCue(normalizedText) || containsTravelOrCountryCue(normalizedText)
+                || normalizedText.indexOf(normalizeSearchText(stripLeadingArticle(query))) >= 0);
+    }
+
+    String[] tokens = importantQueryTokens(query);
+    if (tokens.length == 0) {
+        return true;
+    }
+    int matches = countMatchedTokens(normalizedText, tokens);
+    int required = 1;
+    if (tokens.length >= 2) {
+        required = 2;
+    }
+    if (tokens.length >= 5) {
+        required = 3;
+    }
+    return matches >= Math.min(required, tokens.length);
+}
+
+private static boolean isLikelyLocationQuery(String query) {
+    if (query == null) {
+        return false;
+    }
+    String normalized = normalizeSearchText(stripLeadingArticle(query));
+    if (normalized.length() == 0) {
+        return false;
+    }
+    if (containsAnyWord(normalized, new String[] { "country", "city", "island", "islands", "province", "state", "beach", "mountain", "river", "lake", "capital", "village", "town", "landscape", "skyline", "travel", "tourism", "map", "flag" })) {
+        return true;
+    }
+    return containsCountryName(normalized);
+}
+
+private static boolean containsCountryName(String normalized) {
+    String[] countries = new String[] {
+            "philippines", "japan", "china", "india", "thailand", "vietnam", "indonesia", "malaysia", "singapore",
+            "cambodia", "laos", "myanmar", "south korea", "north korea", "mongolia", "taiwan", "nepal", "bhutan",
+            "pakistan", "bangladesh", "sri lanka", "united kingdom", "england", "scotland", "wales", "ireland",
+            "france", "germany", "spain", "italy", "portugal", "greece", "turkey", "netherlands", "belgium",
+            "switzerland", "austria", "poland", "ukraine", "sweden", "norway", "finland", "denmark", "iceland",
+            "united states", "usa", "canada", "mexico", "brazil", "argentina", "chile", "peru", "colombia",
+            "venezuela", "ecuador", "bolivia", "australia", "new zealand", "egypt", "morocco", "south africa",
+            "nigeria", "kenya", "tanzania", "ethiopia", "saudi arabia", "united arab emirates", "qatar", "oman"
+    };
+    return containsAnyWord(normalized, countries);
+}
+
+private static boolean containsLocationCue(String normalizedText) {
+    return containsAnyWord(normalizedText, new String[] {
+            "wikipedia", "wikimedia", "country", "city", "province", "state", "island", "islands",
+            "capital", "republic", "nation", "archipelago", "asia", "europe", "africa", "travel", "tourism",
+            "landscape", "skyline", "beach", "coast", "mountain", "aerial", "map", "flag"
+    });
+}
+
+private static boolean containsTravelOrCountryCue(String normalizedText) {
+    return containsAnyWord(normalizedText, new String[] {
+            "travel", "tourism", "destination", "landscape", "skyline", "beach", "island", "archipelago",
+            "country", "capital", "city", "flag", "map", "asia", "pacific"
+    });
+}
+
+private static boolean containsLocationPenaltyKeyword(String normalizedText) {
+    return containsAnyWord(normalizedText, new String[] {
+            "plant", "flower", "leaf", "leaves", "nursery", "garden", "aglaonema", "philodendron", "pot",
+            "headphone", "headphones", "earbuds", "smartphone", "phone", "case", "laptop", "keyboard",
+            "cargo", "ship", "train", "rail", "station", "truck", "bus", "dog", "puppy", "cat"
+    });
+}
+
+private static boolean containsWord(String normalizedText, String word) {
+    if (normalizedText == null || normalizedText.length() == 0 || word == null || word.length() == 0) {
+        return false;
+    }
+    String haystack = " " + normalizedText + " ";
+    String needle = " " + normalizeSearchText(word) + " ";
+    return haystack.indexOf(needle) >= 0;
+}
+
+private static boolean containsAnyWord(String normalizedText, String[] words) {
+    if (words == null) {
+        return false;
+    }
+    for (int i = 0; i < words.length; i++) {
+        if (containsWord(normalizedText, words[i])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+private static boolean containsTransportKeyword(String normalizedText) {
+    return containsAnyWord(normalizedText, new String[] {
+            "train", "rail", "railway", "station", "locomotive", "subway", "metro",
+            "cargo", "ship", "vessel", "boat", "tanker", "freight", "truck", "bus"
+    });
+}
+
+private static boolean queryMentionsTransport(String lowerQuery) {
+    if (lowerQuery == null) {
+        return false;
+    }
+    return lowerQuery.indexOf("train") >= 0 || lowerQuery.indexOf("rail") >= 0
+            || lowerQuery.indexOf("station") >= 0 || lowerQuery.indexOf("subway") >= 0
+            || lowerQuery.indexOf("metro") >= 0 || lowerQuery.indexOf("cargo") >= 0
+            || lowerQuery.indexOf("ship") >= 0 || lowerQuery.indexOf("boat") >= 0
+            || lowerQuery.indexOf("truck") >= 0 || lowerQuery.indexOf("bus") >= 0;
+}
+
+private static String[] importantQueryTokens(String query) {
+    if (query == null) {
+        return new String[0];
+    }
+    String cleaned = query.toLowerCase(Locale.US).replace('&', ' ');
+    cleaned = cleaned.replaceAll("[^a-z0-9]+", " ");
+    String[] raw = cleaned.split("\\s+");
+    ArrayList<String> tokens = new ArrayList<String>();
+    for (int i = 0; i < raw.length; i++) {
+        String token = raw[i];
+        if (token == null || token.length() < 3) {
+            continue;
+        }
+        if (isImageQueryStopWord(token)) {
+            continue;
+        }
+        if (!tokens.contains(token)) {
+            tokens.add(token);
+        }
+    }
+    return tokens.toArray(new String[tokens.size()]);
+}
+
+private static boolean isImageQueryStopWord(String token) {
+    if (token == null) {
+        return true;
+    }
+    return token.equals("image") || token.equals("picture") || token.equals("photo")
+            || token.equals("show") || token.equals("give") || token.equals("find")
+            || token.equals("with") || token.equals("the") || token.equals("and")
+            || token.equals("for") || token.equals("from") || token.equals("one")
+            || token.equals("this") || token.equals("that") || token.equals("please")
+            || token.equals("another") || token.equals("me") || token.equals("an")
+            || token.equals("of") || token.equals("to") || token.equals("at");
+}
+
+private static boolean isKnownPoorImageFallback(String candidate) {
+    if (candidate == null) {
+        return true;
+    }
+    String lower = candidate.toLowerCase(Locale.US);
+    return lower.indexOf("picsum.photos") >= 0
+            || lower.indexOf("loremflickr.com") >= 0
+            || lower.indexOf("source.unsplash.com") >= 0
+            || lower.indexOf("googlelogo") >= 0
+            || lower.indexOf("favicon") >= 0
+            || lower.indexOf("gstatic.com/images/branding") >= 0;
+}
+
+private static void addImageCandidatesFromPage(ArrayList<WebImageCandidate> results, String address, String provider) throws Exception {
+    if (results == null || address == null || address.length() == 0) {
+        return;
+    }
+    String html = downloadText(address);
+    collectImageCandidatesFromText(results, html, provider);
+}
+
+private static void collectImageCandidatesFromText(ArrayList<WebImageCandidate> results, String text, String provider) {
+    if (results == null || text == null || text.length() == 0 || results.size() >= 72) {
+        return;
+    }
+    String normalized = text.replace("\\u003d", "=")
+            .replace("\\u0026", "&")
+            .replace("\\/", "/")
+            .replace("&amp;", "&");
+    collectJsonImageCandidates(results, normalized, "\\\"murl\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"", provider);
+    collectJsonImageCandidates(results, normalized, "\"murl\"\\s*:\\s*\"([^\"]+)\"", provider);
+    collectJsonImageCandidates(results, normalized, "\\\"ou\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"", provider);
+    collectJsonImageCandidates(results, normalized, "\"ou\"\\s*:\\s*\"([^\"]+)\"", provider);
+    collectJsonImageCandidates(results, normalized, "\\\"mediaurl\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"", provider);
+    collectJsonImageCandidates(results, normalized, "\"mediaurl\"\\s*:\\s*\"([^\"]+)\"", provider);
+    if (results.size() >= 72) {
+        return;
+    }
+    Matcher matcher = Pattern.compile("https?://[^\\s\\\"'<>\\\\)\\]]+").matcher(normalized);
+    while (matcher.find()) {
+        String candidate = cleanupCandidateUrl(matcher.group());
+        String resolved = null;
+        if (isProbablyImageUrl(candidate)) {
+            resolved = candidate;
+        } else {
+            resolved = tryExtractImageUrlFromSearchUrl(candidate);
+        }
+        if (isProbablyImageUrl(resolved)) {
+            addCandidate(results, resolved, candidate, "", provider);
+        }
+        if (results.size() >= 72) {
+            return;
+        }
+    }
+}
+
+private static void collectJsonImageCandidates(ArrayList<WebImageCandidate> results, String text, String regex, String provider) {
+    if (results == null || text == null || regex == null || results.size() >= 72) {
+        return;
+    }
+    try {
+        Matcher matcher = Pattern.compile(regex).matcher(text);
+        while (matcher.find()) {
+            String value = matcher.group(1);
+            value = value.replace("\\/", "/").replace("\\u0026", "&").replace("\\u003d", "=");
+            value = urlDecode(value);
+            value = cleanupCandidateUrl(value);
+            if (isProbablyImageUrl(value)) {
+                addCandidate(results, value, "", "", provider);
+            }
+            if (results.size() >= 72) {
+                return;
+            }
+        }
+    } catch (Exception ignored) {
+    }
+}
+
+private static void addCandidate(ArrayList<WebImageCandidate> results, String imageUrl, String sourceUrl, String title, String provider) {
+    if (results == null) {
+        return;
+    }
+    String cleanImage = cleanupCandidateUrl(imageUrl);
+    if (!isProbablyImageUrl(cleanImage)) {
+        return;
+    }
+    if (isKnownPoorImageFallback(cleanImage)) {
+        return;
+    }
+    String cleanSource = cleanupCandidateUrl(sourceUrl);
+    String key = normalizeCandidateKey(cleanImage, cleanSource, title);
+    for (int i = 0; i < results.size(); i++) {
+        WebImageCandidate existing = results.get(i);
+        if (existing == null) {
+            continue;
+        }
+        String existingKey = normalizeCandidateKey(existing.imageUrl, existing.sourceUrl, existing.title);
+        if (key.equals(existingKey)) {
+            if ((existing.sourceUrl == null || existing.sourceUrl.length() == 0) && cleanSource != null && cleanSource.length() > 0) {
+                existing.sourceUrl = cleanSource;
+            }
+            if ((existing.title == null || existing.title.length() == 0) && title != null && title.length() > 0) {
+                existing.title = title;
+            }
+            if ((existing.provider == null || existing.provider.length() == 0) && provider != null && provider.length() > 0) {
+                existing.provider = provider;
+            }
+            return;
+        }
+    }
+    WebImageCandidate candidate = new WebImageCandidate();
+    candidate.imageUrl = cleanImage;
+    candidate.sourceUrl = cleanSource == null ? "" : cleanSource;
+    candidate.title = title == null ? "" : title.trim();
+    candidate.provider = provider == null ? "" : provider;
+    results.add(candidate);
+}
+
+private static String normalizeCandidateKey(String imageUrl, String sourceUrl, String title) {
+    StringBuilder builder = new StringBuilder();
+    String image = normalizeUrlForKey(imageUrl);
+    String source = normalizeUrlForKey(sourceUrl);
+    String text = normalizeSearchText(title);
+    builder.append(image);
+    if (source.length() > 0) {
+        builder.append('|').append(source);
+    }
+    if (text.length() > 0) {
+        builder.append('|').append(text);
+    }
+    return builder.toString();
+}
+
+private static String normalizeUrlForKey(String value) {
+    if (value == null) {
+        return "";
+    }
+    String normalized = urlDecode(value);
+    if (normalized == null) {
+        normalized = value;
+    }
+    normalized = normalized.toLowerCase(Locale.US).trim();
+    int hash = normalized.indexOf('#');
+    if (hash >= 0) {
+        normalized = normalized.substring(0, hash);
+    }
+    int query = normalized.indexOf('?');
+    if (query >= 0) {
+        normalized = normalized.substring(0, query);
+    }
+    if (normalized.startsWith("https://")) {
+        normalized = normalized.substring(8);
+    } else if (normalized.startsWith("http://")) {
+        normalized = normalized.substring(7);
+    }
+    if (normalized.startsWith("www.")) {
+        normalized = normalized.substring(4);
+    }
+    return normalized;
+}
+
+private static String tryExtractImageUrlFromSearchUrl(String address) {
+    if (address == null || address.length() == 0) {
+        return null;
+    }
+    String[] keys = new String[] { "imgurl=", "mediaurl=", "mediaUrl=" };
+    for (int i = 0; i < keys.length; i++) {
+        int index = address.indexOf(keys[i]);
+        if (index >= 0) {
+            int start = index + keys[i].length();
+            int end = address.indexOf('&', start);
+            String value = end >= 0 ? address.substring(start, end) : address.substring(start);
+            value = urlDecode(value);
+            value = cleanupCandidateUrl(value);
+            if (isProbablyImageUrl(value)) {
+                return value;
+            }
+        }
+    }
+    return null;
+}
+
+private static String urlDecode(String value) {
+    if (value == null) {
+        return null;
+    }
+    try {
+        return URLDecoder.decode(value, "UTF-8");
+    } catch (Exception ignored) {
+        return value;
+    }
+}
+
+private static String cleanupCandidateUrl(String value) {
+    if (value == null) {
+        return null;
+    }
+    String cleaned = value.trim();
+    while (cleaned.endsWith("\\") || cleaned.endsWith(",") || cleaned.endsWith("\"")
+            || cleaned.endsWith("'") || cleaned.endsWith(")") || cleaned.endsWith("]")
+            || cleaned.endsWith("}")) {
+        cleaned = cleaned.substring(0, cleaned.length() - 1);
+    }
+    return cleaned;
+}
+
+private static boolean isProbablyImageUrl(String value) {
+    if (value == null || value.length() == 0) {
+        return false;
+    }
+    String lower = value.toLowerCase(Locale.US);
+    if (lower.startsWith("data:")) {
+        return false;
+    }
+    if (lower.indexOf("googlelogo") >= 0 || lower.indexOf("/logos/") >= 0
+            || lower.indexOf("favicon") >= 0 || lower.indexOf("sprite") >= 0
+            || lower.indexOf("gstatic.com/images/branding") >= 0) {
+        return false;
+    }
+    return lower.indexOf("encrypted-tbn0.gstatic.com") >= 0
+            || lower.indexOf("gstatic.com/images") >= 0
+            || lower.indexOf("googleusercontent.com") >= 0
+            || lower.indexOf("mm.bing.net") >= 0
+            || lower.indexOf("th.bing.com") >= 0
+            || lower.indexOf("images.unsplash.com") >= 0
+            || lower.indexOf("i.pinimg.com") >= 0
+            || lower.indexOf("upload.wikimedia.org") >= 0
+            || lower.indexOf("wikimedia.org") >= 0
+            || lower.indexOf("pollinations.ai") >= 0
+            || lower.indexOf(".jpg") >= 0
+            || lower.indexOf(".jpeg") >= 0
+            || lower.indexOf(".png") >= 0
+            || lower.indexOf(".webp") >= 0
+            || lower.indexOf(".gif") >= 0
+            || lower.indexOf("format=jpg") >= 0
+            || lower.indexOf("format=jpeg") >= 0
+            || lower.indexOf("format=png") >= 0
+            || lower.indexOf("format=webp") >= 0;
+}
+
+private static String downloadText(String address) throws Exception {
+    HttpURLConnection connection = null;
+    InputStream input = null;
+    try {
+        URL url = new URL(address);
+        connection = (HttpURLConnection) url.openConnection();
+        connection.setConnectTimeout(20000);
+        connection.setReadTimeout(20000);
+        connection.setInstanceFollowRedirects(true);
+        connection.setRequestMethod("GET");
+        connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 10; Jarvis) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36");
+        connection.setRequestProperty("Accept-Language", "en-US,en;q=0.9");
+        connection.setRequestProperty("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+        connection.connect();
+        int code = connection.getResponseCode();
+        input = code >= 200 && code < 400 ? connection.getInputStream() : connection.getErrorStream();
+        String response = readStream(input);
+        if (code < 200 || code >= 400) {
+            throw new Exception("HTTP " + code + " " + shorten(response, 140));
+        }
+        return response;
+    } finally {
+        if (input != null) {
+            try {
+                input.close();
+            } catch (Exception ignored) {
+            }
+        }
+        if (connection != null) {
+            connection.disconnect();
+        }
+    }
+}
+
+private static void rememberImageSearch(Context context, String query, int index) {
+    if (context == null) {
+        return;
+    }
+    SharedPreferences prefs = context.getSharedPreferences(JarvisCommandCenter.PREFS_NAME, Context.MODE_PRIVATE);
+    prefs.edit()
+            .putString(PREF_LAST_WEB_IMAGE_QUERY, query == null ? "" : query)
+            .putInt(PREF_LAST_WEB_IMAGE_INDEX, index)
+            .apply();
+}
+
+private static String getRememberedImageSearchQuery(Context context) {
+    if (context == null) {
+        return "";
+    }
+    SharedPreferences prefs = context.getSharedPreferences(JarvisCommandCenter.PREFS_NAME, Context.MODE_PRIVATE);
+    return prefs.getString(PREF_LAST_WEB_IMAGE_QUERY, "");
+}
+
+private static int getRememberedImageSearchIndex(Context context) {
+    if (context == null) {
+        return -1;
+    }
+    SharedPreferences prefs = context.getSharedPreferences(JarvisCommandCenter.PREFS_NAME, Context.MODE_PRIVATE);
+    return prefs.getInt(PREF_LAST_WEB_IMAGE_INDEX, -1);
+}
+
+
+private static byte[] performOpenAiStyleImageGeneration(Context context, String prompt, String apiKey, String model) throws Exception {
+    JSONObject body = new JSONObject();
+    body.put("model", model);
+    body.put("prompt", prompt);
+    body.put("size", "1024x1024");
+    body.put("response_format", "b64_json");
+
+    String response = postJson(getImageGenerationsUrl(context), body.toString(), apiKey);
+    JSONObject json = new JSONObject(response);
+    if (json.has("error")) {
+        throw new Exception(extractApiErrorMessage(response));
+    }
+
+    JSONArray data = json.optJSONArray("data");
+    if (data == null || data.length() == 0) {
+        throw new Exception("the provider returned no image data");
+    }
+
+    JSONObject first = data.optJSONObject(0);
+    if (first == null) {
+        throw new Exception("the provider returned an invalid image payload");
+    }
+
+    String base64 = first.optString("b64_json", "");
+    if (base64 != null && base64.length() > 0) {
+        return Base64.decode(base64, Base64.DEFAULT);
+    }
+
+    String imageUrl = first.optString("url", "");
+    if (imageUrl == null || imageUrl.length() == 0) {
+        throw new Exception("the provider did not return a usable image");
+    }
+
+    return downloadBinary(imageUrl);
+}
+
+private static String[] getImageGenerationModelFallbacks(Context context) {
+    String baseUrl = getBaseUrl(context).toLowerCase(Locale.UK);
+    String provider = getProvider(context);
+    if (PROVIDER_OPENAI.equals(provider) || baseUrl.indexOf("api.openai.com") >= 0) {
+        return new String[] { "gpt-image-1", "dall-e-3", "dall-e-2" };
+    }
+    return new String[] {
+            "dall-e-3",
+            "openai/dall-e-3",
+            "dall-e-2",
+            "openai/dall-e-2",
+            "gpt-image-1",
+            "openai/gpt-image-1"
+    };
+}
+
+private static String[] buildFreeImageGenerationUrls(String prompt) {
+    String safePrompt = prompt == null ? "jarvis image" : prompt.trim();
+    if (safePrompt.length() == 0) {
+        safePrompt = "jarvis image";
+    }
+    String encodedPrompt = safeUrlEncode(safePrompt);
+    return new String[] {
+            POLLINATIONS_IMAGE_BASE_URL + encodedPrompt + "?model=flux&width=1024&height=1024&nologo=true&enhance=true&safe=false",
+            POLLINATIONS_IMAGE_BASE_URL + encodedPrompt + "?model=turbo&width=1024&height=1024&nologo=true&enhance=true&safe=false",
+            POLLINATIONS_IMAGE_BASE_URL + encodedPrompt + "?model=kontext&width=1024&height=1024&nologo=true&enhance=true&safe=false",
+            POLLINATIONS_IMAGE_BASE_URL + encodedPrompt + "?model=flux-realism&width=1024&height=1024&nologo=true&enhance=true&safe=false",
+            POLLINATIONS_IMAGE_ALT_URL + encodedPrompt + "?width=1024&height=1024&nologo=true&enhance=true&safe=false",
+            POLLINATIONS_IMAGE_BASE_URL + encodedPrompt + "?width=1024&height=1024&nologo=true&enhance=true&safe=false"
+    };
+}
+
+private static String safeUrlEncode(String value) {
+    try {
+        return URLEncoder.encode(value == null ? "" : value, "UTF-8");
+    } catch (Exception ignored) {
+        String safe = value == null ? "" : value;
+        safe = safe.replace(" ", "%20");
+        safe = safe.replace("\n", "%20");
+        safe = safe.replace("\r", "%20");
+        return safe;
+    }
+}
+
+private static boolean looksLikeImageBytes(byte[] bytes) {
+    if (bytes == null || bytes.length < 16) {
+        return false;
+    }
+    if ((bytes[0] & 255) == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47) {
+        return true;
+    }
+    if ((bytes[0] & 255) == 0xFF && (bytes[1] & 255) == 0xD8) {
+        return true;
+    }
+    if (bytes[0] == 'G' && bytes[1] == 'I' && bytes[2] == 'F') {
+        return true;
+    }
+    return false;
+}
+
+private static String guessImageMimeType(byte[] bytes) {
+    if (bytes == null || bytes.length < 4) {
+        return "image/png";
+    }
+    if ((bytes[0] & 255) == 0xFF && (bytes[1] & 255) == 0xD8) {
+        return "image/jpeg";
+    }
+    if (bytes[0] == 'G' && bytes[1] == 'I' && bytes[2] == 'F') {
+        return "image/gif";
+    }
+    return "image/png";
+}
+
+public static void requestVisionRecognition(final Context context, final Bitmap bitmap, final boolean productMode, final VisionCallback callback) {
+    final Context appContext = context.getApplicationContext();
+    new AsyncTask<Void, Void, String>() {
+        protected String doInBackground(Void... params) {
+            if (bitmap == null) {
+                return "No image was available for AI analysis.";
+            }
+            String providerError = "";
+            try {
+                String key = getActiveApiKey(appContext);
+                if (key != null && key.trim().length() > 0) {
+                    try {
+                        return requestVisionRecognitionWithEndpoint(appContext, bitmap, productMode, getChatCompletionsUrl(appContext), key.trim(), getModel(appContext));
+                    } catch (Exception error) {
+                        providerError = safeMessage(error);
+                    }
+                } else {
+                    providerError = "No active AI key was configured.";
+                }
+                try {
+                    return requestVisionRecognitionWithEndpoint(appContext, bitmap, productMode, POLLINATIONS_TEXT_OPENAI_URL, "", "openai-fast");
+                } catch (Exception freeError) {
+                    String freeMessage = safeMessage(freeError);
+                    if (providerError != null && providerError.length() > 0) {
+                        return "AI vision failed. Provider: " + providerError + ". Free fallback: " + freeMessage;
+                    }
+                    return "AI vision failed. Free fallback: " + freeMessage;
+                }
+            } catch (Exception error) {
+                return "AI vision failed: " + safeMessage(error);
+            }
+        }
+
+        protected void onPostExecute(String result) {
+            if (callback != null) {
+                callback.onVisionResult(result);
+            }
+        }
+    }.execute();
+}
+
+private static String requestVisionRecognitionWithEndpoint(Context context, Bitmap bitmap, boolean productMode, String url, String key, String model) throws Exception {
+    String base64Image = bitmapToBase64(scaleBitmapForVision(bitmap));
+
+    JSONObject body = new JSONObject();
+    body.put("model", model == null || model.length() == 0 ? "openai-fast" : model);
+    body.put("temperature", 0.1);
+    body.put("max_tokens", 260);
+
+    JSONArray messages = new JSONArray();
+
+    JSONObject system = new JSONObject();
+    system.put("role", "system");
+    system.put("content", productMode
+            ? "You identify products and everyday objects from user photos. Be concrete and practical. If the photo shows a phone, headphones, can, bottle, remote, keyboard, screen, charger, packet, toy, tool, or other object, name that object directly. Avoid abstract colour/shape descriptions unless you genuinely cannot identify it."
+            : "You identify the main visible object or scene in a user photo. Be concrete and concise.");
+    messages.put(system);
+
+    JSONObject user = new JSONObject();
+    user.put("role", "user");
+
+    JSONArray content = new JSONArray();
+
+    JSONObject textPart = new JSONObject();
+    textPart.put("type", "text");
+    textPart.put("text", productMode
+            ? "What is this item? Start with 'Likely product:' and give the most likely object name first. For example, say smartphone, over-ear headphones, drink can, laptop, charger, remote, etc. Then add a short confidence note and any visible clues. Do not answer with vague visual descriptions unless no object is identifiable."
+            : "What is this? Start with 'Likely subject:' and identify the main visible thing concretely.");
+    content.put(textPart);
+
+    JSONObject imagePart = new JSONObject();
+    imagePart.put("type", "image_url");
+    JSONObject imageUrl = new JSONObject();
+    imageUrl.put("url", "data:image/jpeg;base64," + base64Image);
+    imagePart.put("image_url", imageUrl);
+    content.put(imagePart);
+
+    user.put("content", content);
+    messages.put(user);
+    body.put("messages", messages);
+
+    String response = postJson(url, body.toString(), key == null ? "" : key);
+    JSONObject json = new JSONObject(response);
+    if (json.has("error")) {
+        throw new Exception(extractApiErrorMessage(response));
+    }
+    JSONArray choices = json.optJSONArray("choices");
+    if (choices != null && choices.length() > 0) {
+        JSONObject message = choices.getJSONObject(0).optJSONObject("message");
+        if (message != null) {
+            String contentText = message.optString("content", "").trim();
+            if (contentText.length() > 0) {
+                return contentText;
+            }
+        }
+    }
+    throw new Exception("AI vision returned no usable text");
+}
+
+private static Bitmap scaleBitmapForVision(Bitmap source) {
+    if (source == null) {
+        return null;
+    }
+    int width = source.getWidth();
+    int height = source.getHeight();
+    if (width <= 0 || height <= 0) {
+        return source;
+    }
+    int largest = Math.max(width, height);
+    if (largest <= 1280) {
+        return source;
+    }
+    float scale = 1280.0f / (float) largest;
+    int nextWidth = Math.max(1, Math.round(width * scale));
+    int nextHeight = Math.max(1, Math.round(height * scale));
+    return Bitmap.createScaledBitmap(source, nextWidth, nextHeight, true);
+}
+
+private static String bitmapToBase64(Bitmap bitmap) throws Exception {
+    ByteArrayOutputStream output = new ByteArrayOutputStream();
+    try {
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output);
+        output.flush();
+        return Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP);
+    } finally {
+        try {
+            output.close();
+        } catch (Exception ignored) {
+        }
+    }
+}
+
+private static byte[] downloadImageCandidate(String address) throws Exception {
+    byte[] bytes = downloadBinary(address);
+    if (!looksLikeImageBytes(bytes)) {
+        throw new Exception("image result did not return displayable image data");
+    }
+    return bytes;
+}
+
+private static byte[] downloadBinary(String address) throws Exception {
+    HttpURLConnection connection = null;
+    InputStream input = null;
+    ByteArrayOutputStream output = null;
+    try {
+        URL url = new URL(address);
+        connection = (HttpURLConnection) url.openConnection();
+        connection.setConnectTimeout(20000);
+        connection.setReadTimeout(90000);
+        connection.setInstanceFollowRedirects(true);
+        connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 10; Jarvis) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36");
+        connection.setRequestProperty("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8");
+        connection.setRequestProperty("Accept-Language", "en-US,en;q=0.9");
+        int code = connection.getResponseCode();
+        input = code >= 200 && code < 400 ? connection.getInputStream() : connection.getErrorStream();
+        output = new ByteArrayOutputStream();
+        byte[] buffer = new byte[4096];
+        int read;
+        while (input != null && (read = input.read(buffer)) > 0) {
+            output.write(buffer, 0, read);
+        }
+        if (code < 200 || code >= 400) {
+            throw new Exception("HTTP " + code);
+        }
+        return output.toByteArray();
+    } finally {
+        if (output != null) {
+            try {
+                output.close();
+            } catch (Exception ignored) {
+            }
+        }
+        if (input != null) {
+            try {
+                input.close();
+            } catch (Exception ignored) {
+            }
+        }
+        if (connection != null) {
+            connection.disconnect();
+        }
+    }
+}
+
+
+private static String buildImageFileName(String prompt) {
+    String base = prompt == null ? "jarvis_image" : prompt.toLowerCase(Locale.UK);
+    base = base.replaceAll("[^a-z0-9]+", "_");
+    while (base.startsWith("_")) {
+        base = base.substring(1);
+    }
+    while (base.endsWith("_")) {
+        base = base.substring(0, base.length() - 1);
+    }
+    if (base.length() == 0) {
+        base = "jarvis_image";
+    }
+    if (base.length() > 36) {
+        base = base.substring(0, 36);
+    }
+    return base + ".png";
+}
+
+
+private static String appendError(String oldValue, String nextValue) {
+    if (nextValue == null || nextValue.length() == 0) {
+        return oldValue == null ? "" : oldValue;
+    }
+    if (oldValue == null || oldValue.length() == 0) {
+        return nextValue;
+    }
+    return oldValue + " | " + nextValue;
+}
+
+private static String shorten(String value, int maxLength) {
+    if (value == null) {
+        return "";
+    }
+    if (value.length() <= maxLength) {
+        return value;
+    }
+    return value.substring(0, maxLength) + "...";
+}
+
+private static void deliver(JarvisOutput output, String text) {
+
         if (output != null) {
             output.onAsyncResponse(text);
         }
@@ -938,7 +2586,7 @@ public final class JarvisOnlineBrain {
             connection = (HttpURLConnection) url.openConnection();
             connection.setConnectTimeout(14000);
             connection.setReadTimeout(16000);
-            connection.setRequestProperty("User-Agent", "JarvisAIDE/1.31 Android");
+            connection.setRequestProperty("User-Agent", "JarvisAIDE/1.4.4 Android");
             InputStream input = new BufferedInputStream(connection.getInputStream());
             return readStream(input);
         } finally {
@@ -958,7 +2606,9 @@ public final class JarvisOnlineBrain {
             connection.setRequestMethod("POST");
             connection.setDoOutput(true);
             connection.setRequestProperty("Content-Type", "application/json");
-            connection.setRequestProperty("Authorization", "Bearer " + apiKey);
+            if (apiKey != null && apiKey.length() > 0) {
+                connection.setRequestProperty("Authorization", "Bearer " + apiKey);
+            }
             OutputStream output = connection.getOutputStream();
             output.write(body.getBytes("UTF-8"));
             output.flush();

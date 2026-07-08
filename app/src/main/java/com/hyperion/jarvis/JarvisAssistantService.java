@@ -355,6 +355,10 @@ public class JarvisAssistantService extends Service implements TextToSpeech.OnIn
             return;
         }
         updateNotification(text);
+        String speechText = text;
+        if (countWords(text) > 30) {
+            speechText = "I displayed the full response in Jarvis. Open the app to read it, or say read that out loud inside Jarvis.";
+        }
         pendingRestartAfterSpeech = restartAfter;
         try {
             if (speechRecognizer != null) {
@@ -371,12 +375,24 @@ public class JarvisAssistantService extends Service implements TextToSpeech.OnIn
         }
         String utteranceId = "jarvis_service_" + System.currentTimeMillis();
         if (Build.VERSION.SDK_INT >= 21) {
-            textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId);
+            textToSpeech.speak(speechText, TextToSpeech.QUEUE_FLUSH, null, utteranceId);
         } else {
             HashMap<String, String> params = new HashMap<String, String>();
             params.put(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId);
-            textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, params);
+            textToSpeech.speak(speechText, TextToSpeech.QUEUE_FLUSH, params);
         }
+    }
+
+    private int countWords(String text) {
+        if (text == null) {
+            return 0;
+        }
+        String trimmed = text.trim();
+        if (trimmed.length() == 0) {
+            return 0;
+        }
+        String[] parts = trimmed.split("\\s+");
+        return parts.length;
     }
 
     public void onInit(int status) {
@@ -540,6 +556,11 @@ public class JarvisAssistantService extends Service implements TextToSpeech.OnIn
         JarvisCodeTools.clearLastCodeSnippet(this);
     }
 
+    public void onClearGeneratedImage() {
+        JarvisImageStore.clearPendingImage(this);
+        speak("Generated image cleared.", true);
+    }
+
     public void onSavePendingProjectRequested() {
         String pending = JarvisProjectPackager.getPendingProject(this);
         if (pending != null && pending.length() > 0) {
@@ -575,6 +596,17 @@ public class JarvisAssistantService extends Service implements TextToSpeech.OnIn
             }
         });
     }
+
+
+public void onImageGenerated(byte[] imageBytes, String mimeType, String suggestedFileName) {
+    if (imageBytes != null && imageBytes.length > 0) {
+        JarvisImageStore.savePendingImage(this, imageBytes, mimeType, suggestedFileName);
+        speak("I generated the image. Open Jarvis to view it and tap it to save.", true);
+    } else {
+        speak("I could not prepare the generated image.", true);
+    }
+}
+
 
     public void onDestroy() {
         destroyed = true;

@@ -10,6 +10,8 @@ import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.BitmapFactory;
+import android.graphics.Bitmap;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
@@ -30,6 +32,7 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
+import android.widget.ImageView;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -40,6 +43,7 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
+import java.io.OutputStream;
 import java.util.Locale;
 
 public class MainActivity extends Activity implements View.OnClickListener, TextToSpeech.OnInitListener, JarvisOutput {
@@ -47,6 +51,7 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
     private static final int REQUEST_BACKGROUND_AUDIO = 4002;
     private static final int REQUEST_OVERLAY_PERMISSION = 4003;
     private static final int REQUEST_CREATE_PROJECT_ZIP = 4004;
+    private static final int REQUEST_CREATE_IMAGE_FILE = 4005;
 
     private JarvisHudView hudView;
     private TextView titleView;
@@ -63,10 +68,18 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
     private TextView codeSnippetView;
     private Button copyCodeButton;
     private Button clearCodeButton;
+    private LinearLayout imagePanel;
+    private ImageView generatedImageView;
+    private Button saveImageButton;
+    private Button clearImageButton;
     private String lastCodeSnippet;
+    private String lastFullSpokenText;
     private String pendingProjectPackageText;
     private boolean projectSaveDialogShowing;
     private boolean projectSaveOfferDismissed;
+    private byte[] pendingGeneratedImageBytes;
+    private String pendingGeneratedImageMimeType;
+    private String pendingGeneratedImageName;
 
     private SpeechRecognizer speechRecognizer;
     private Intent recognizerIntent;
@@ -126,6 +139,7 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
         updateMuteButton();
         updateBackgroundButton();
         restoreLastCodeSnippetPanel();
+        restorePendingGeneratedImage();
         maybeOfferPendingProjectPackage(false);
         if (pendingBackgroundEnableAfterOverlay && JarvisCommandCenter.hasOverlayPermission(this)) {
             pendingBackgroundEnableAfterOverlay = false;
@@ -240,9 +254,47 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
 
         LinearLayout.LayoutParams codePanelParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         codePanelParams.topMargin = dp(8);
-        overlay.addView(codePanel, codePanelParams);
+overlay.addView(codePanel, codePanelParams);
 
-        LinearLayout typedRow = new LinearLayout(this);
+imagePanel = new LinearLayout(this);
+imagePanel.setOrientation(LinearLayout.VERTICAL);
+imagePanel.setPadding(dp(8), dp(6), dp(8), dp(6));
+imagePanel.setBackground(makePanelBackground(76, Color.rgb(125, 235, 190), Color.argb(78, 8, 26, 18)));
+imagePanel.setVisibility(View.GONE);
+
+TextView imageTitle = new TextView(this);
+imageTitle.setText("GENERATED IMAGE");
+imageTitle.setTextColor(Color.rgb(175, 255, 220));
+imageTitle.setTextSize(11);
+imageTitle.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+imagePanel.addView(imageTitle, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(18)));
+
+generatedImageView = new ImageView(this);
+generatedImageView.setAdjustViewBounds(true);
+generatedImageView.setClickable(true);
+generatedImageView.setScaleType(ImageView.ScaleType.FIT_CENTER);
+generatedImageView.setBackgroundColor(Color.argb(110, 0, 0, 0));
+generatedImageView.setPadding(dp(4), dp(4), dp(4), dp(4));
+generatedImageView.setOnClickListener(this);
+imagePanel.addView(generatedImageView, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(180)));
+
+saveImageButton = makeButton("TAP IMAGE OR PRESS TO SAVE");
+saveImageButton.setOnClickListener(this);
+LinearLayout.LayoutParams saveImageParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(34));
+saveImageParams.topMargin = dp(5);
+imagePanel.addView(saveImageButton, saveImageParams);
+
+clearImageButton = makeButton("CLEAR GENERATED IMAGE");
+clearImageButton.setOnClickListener(this);
+LinearLayout.LayoutParams clearImageParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(34));
+clearImageParams.topMargin = dp(5);
+imagePanel.addView(clearImageButton, clearImageParams);
+
+LinearLayout.LayoutParams imagePanelParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+imagePanelParams.topMargin = dp(8);
+overlay.addView(imagePanel, imagePanelParams);
+
+LinearLayout typedRow = new LinearLayout(this);
         typedRow.setOrientation(LinearLayout.HORIZONTAL);
         typedRow.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout.LayoutParams typedRowParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(46));
@@ -457,6 +509,10 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
             copyLastCodeSnippet();
         } else if (view == clearCodeButton) {
             clearCodeSnippetPanel(true);
+        } else if (view == saveImageButton || view == generatedImageView) {
+            launchImageSavePicker();
+        } else if (view == clearImageButton) {
+            clearGeneratedImagePanel(true);
         } else if (view == backgroundButton) {
             if (JarvisCommandCenter.isBackgroundEnabled(this) && JarvisCommandCenter.isBackgroundPaused(this)) {
                 startBackgroundFromActivity();
@@ -667,6 +723,15 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
             appendConsole("WAKE: Command after hot phrase: " + command);
         }
 
+        if (isReadLastOutputAloudCommand(command)) {
+            if (lastFullSpokenText != null && lastFullSpokenText.length() > 0) {
+                speakFull(lastFullSpokenText);
+            } else {
+                speak("I do not have a previous long response to read out loud yet.");
+            }
+            return;
+        }
+
         if (looksLikeBackgroundStart(command)) {
             if (Build.VERSION.SDK_INT >= 23 && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(new String[] { Manifest.permission.RECORD_AUDIO }, REQUEST_BACKGROUND_AUDIO);
@@ -788,11 +853,26 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
     }
 
     private void speak(String text) {
+        speakInternal(text, false);
+    }
+
+    private void speakFull(String text) {
+        speakInternal(text, true);
+    }
+
+    private void speakInternal(String text, boolean forceFullSpeech) {
         if (text == null || text.length() == 0) {
             return;
         }
         appendConsole("JARVIS: " + text);
         transcriptView.setText(text);
+        String speechText = text;
+        if (!forceFullSpeech && shouldDisplayOnly(text)) {
+            lastFullSpokenText = text;
+            speechText = "I displayed the full response on screen. Say read that out loud if you want me to speak it.";
+        } else {
+            lastFullSpokenText = text;
+        }
         if (muted || !ttsReady || textToSpeech == null) {
             hudView.setMode(JarvisHudView.MODE_IDLE);
             setStatus("SYSTEM READY");
@@ -810,11 +890,11 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
         hudView.setMode(JarvisHudView.MODE_SPEAKING);
         setStatus("SPEAKING...");
         if (Build.VERSION.SDK_INT >= 21) {
-            textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId);
+            textToSpeech.speak(speechText, TextToSpeech.QUEUE_FLUSH, null, utteranceId);
         } else {
             HashMap<String, String> params = new HashMap<String, String>();
             params.put(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId);
-            textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, params);
+            textToSpeech.speak(speechText, TextToSpeech.QUEUE_FLUSH, params);
         }
         if (restartListeningAfterSpeech) {
             handler.postDelayed(new Runnable() {
@@ -826,6 +906,39 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
                 }
             }, 2200);
         }
+    }
+
+    private boolean shouldDisplayOnly(String text) {
+        if (text == null) {
+            return false;
+        }
+        return countWords(text) > 30;
+    }
+
+    private int countWords(String text) {
+        if (text == null) {
+            return 0;
+        }
+        String trimmed = text.trim();
+        if (trimmed.length() == 0) {
+            return 0;
+        }
+        String[] parts = trimmed.split("\\s+");
+        return parts.length;
+    }
+
+    private boolean isReadLastOutputAloudCommand(String command) {
+        if (command == null) {
+            return false;
+        }
+        String lower = command.toLowerCase(Locale.UK).trim();
+        return lower.equals("read that out loud")
+                || lower.equals("read it out loud")
+                || lower.equals("read the full output")
+                || lower.equals("read the last response")
+                || lower.equals("speak the full output")
+                || lower.equals("say the full output")
+                || lower.equals("read aloud");
     }
 
     private void appendConsole(String line) {
@@ -956,7 +1069,7 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
         Runnable refresh = new Runnable() {
             public void run() {
                 if (codeSnippetView != null) {
-                    codeSnippetView.setText(nextSnippet);
+                    codeSnippetView.setText(JarvisCodeTools.highlightCodeSnippet(nextSnippet));
                 }
                 if (codePanel != null) {
                     codePanel.setVisibility(View.VISIBLE);
@@ -1008,6 +1121,145 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
         speak("I could not copy the code snippet.");
     }
 
+
+
+private void clearGeneratedImagePanel(boolean announce) {
+    pendingGeneratedImageBytes = null;
+    pendingGeneratedImageMimeType = null;
+    pendingGeneratedImageName = null;
+    JarvisImageStore.clearPendingImage(this);
+    if (generatedImageView != null) {
+        generatedImageView.setImageDrawable(null);
+    }
+    if (imagePanel != null) {
+        imagePanel.setVisibility(View.GONE);
+    }
+    appendConsole("IMAGE: Generated image cleared.");
+    if (announce) {
+        speak("Generated image cleared.");
+    }
+}
+
+private void restorePendingGeneratedImage() {
+    if (pendingGeneratedImageBytes != null && pendingGeneratedImageBytes.length > 0) {
+        return;
+    }
+    JarvisImageStore.PendingImage pending = JarvisImageStore.readPendingImage(this);
+    if (pending != null && pending.data != null && pending.data.length > 0) {
+        showGeneratedImage(pending.data, pending.mimeType, pending.suggestedFileName, false);
+    }
+}
+
+private void showGeneratedImage(byte[] imageBytes, String mimeType, String suggestedFileName, boolean announce) {
+    if (imageBytes == null || imageBytes.length == 0) {
+        return;
+    }
+    pendingGeneratedImageBytes = imageBytes;
+    pendingGeneratedImageMimeType = mimeType == null || mimeType.length() == 0 ? "image/png" : mimeType;
+    pendingGeneratedImageName = suggestedFileName == null || suggestedFileName.length() == 0 ? "jarvis_image.png" : suggestedFileName;
+    JarvisImageStore.savePendingImage(this, pendingGeneratedImageBytes, pendingGeneratedImageMimeType, pendingGeneratedImageName);
+    if (imagePanel != null) {
+        imagePanel.setVisibility(View.GONE);
+    }
+    if (generatedImageView != null) {
+        generatedImageView.setImageDrawable(null);
+    }
+    final byte[] nextImageBytes = pendingGeneratedImageBytes;
+    Runnable refresh = new Runnable() {
+        public void run() {
+            try {
+                Bitmap bitmap = BitmapFactory.decodeByteArray(nextImageBytes, 0, nextImageBytes.length);
+                if (bitmap != null && generatedImageView != null) {
+                    generatedImageView.setImageBitmap(bitmap);
+                }
+                if (imagePanel != null) {
+                    imagePanel.setVisibility(View.VISIBLE);
+                }
+                appendConsole("AI: New image ready. Tap the image to save it.");
+            } catch (Exception error) {
+                appendConsole("IMAGE: " + error.getMessage());
+            }
+        }
+    };
+    if (handler != null) {
+        handler.postDelayed(refresh, 120);
+    } else {
+        refresh.run();
+    }
+    if (announce) {
+        speak("Image ready. Tap the image to choose where to save it.");
+    }
+}
+
+private void launchImageSavePicker() {
+    if (pendingGeneratedImageBytes == null || pendingGeneratedImageBytes.length == 0) {
+        JarvisImageStore.PendingImage pending = JarvisImageStore.readPendingImage(this);
+        if (pending != null) {
+            pendingGeneratedImageBytes = pending.data;
+            pendingGeneratedImageMimeType = pending.mimeType;
+            pendingGeneratedImageName = pending.suggestedFileName;
+        }
+    }
+    if (pendingGeneratedImageBytes == null || pendingGeneratedImageBytes.length == 0) {
+        speak("There is no generated image waiting to save.");
+        return;
+    }
+    try {
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType(pendingGeneratedImageMimeType == null || pendingGeneratedImageMimeType.length() == 0 ? "image/png" : pendingGeneratedImageMimeType);
+        intent.putExtra(Intent.EXTRA_TITLE, pendingGeneratedImageName == null || pendingGeneratedImageName.length() == 0 ? "jarvis_image.png" : pendingGeneratedImageName);
+        startActivityForResult(intent, REQUEST_CREATE_IMAGE_FILE);
+    } catch (Exception error) {
+        appendConsole("SAVE IMAGE: " + error.getMessage());
+        speak("I could not open the Android file picker on this device.");
+    }
+}
+
+private String saveGeneratedImageToUri(Uri uri) {
+    if (uri == null) {
+        return "Image save cancelled.";
+    }
+    if (pendingGeneratedImageBytes == null || pendingGeneratedImageBytes.length == 0) {
+        JarvisImageStore.PendingImage pending = JarvisImageStore.readPendingImage(this);
+        if (pending != null) {
+            pendingGeneratedImageBytes = pending.data;
+            pendingGeneratedImageMimeType = pending.mimeType;
+            pendingGeneratedImageName = pending.suggestedFileName;
+        }
+    }
+    if (pendingGeneratedImageBytes == null || pendingGeneratedImageBytes.length == 0) {
+        return "There is no generated image waiting to save.";
+    }
+    OutputStream output = null;
+    try {
+        output = getContentResolver().openOutputStream(uri);
+        if (output == null) {
+            return "Image save failed: could not open the selected file.";
+        }
+        output.write(pendingGeneratedImageBytes);
+        output.flush();
+        return "Generated image saved successfully.";
+    } catch (Exception error) {
+        return "Image save failed: " + error.getMessage();
+    } finally {
+        if (output != null) {
+            try {
+                output.close();
+            } catch (Exception ignored) {
+            }
+        }
+    }
+}
+
+public void onImageGenerated(final byte[] imageBytes, final String mimeType, final String suggestedFileName) {
+    runOnUiThread(new Runnable() {
+        public void run() {
+            showGeneratedImage(imageBytes, mimeType, suggestedFileName, true);
+        }
+    });
+}
+
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQUEST_RECORD_AUDIO) {
@@ -1056,6 +1308,14 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
         runOnUiThread(new Runnable() {
             public void run() {
                 clearCodeSnippetPanel(false);
+            }
+        });
+    }
+
+    public void onClearGeneratedImage() {
+        runOnUiThread(new Runnable() {
+            public void run() {
+                clearGeneratedImagePanel(false);
             }
         });
     }
@@ -1164,6 +1424,16 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
 
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_CREATE_IMAGE_FILE) {
+            if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+                speak("Image save cancelled.");
+                return;
+            }
+            String result = saveGeneratedImageToUri(data.getData());
+            appendConsole("SAVE IMAGE: " + result);
+            speak(result);
+            return;
+        }
         if (requestCode == REQUEST_CREATE_PROJECT_ZIP) {
             if (resultCode != RESULT_OK || data == null || data.getData() == null) {
                 speak("Project save cancelled.");

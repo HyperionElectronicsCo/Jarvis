@@ -1,8 +1,16 @@
 package com.hyperion.jarvis;
 
 import android.content.Context;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.text.SpannableStringBuilder;
+import android.text.Spanned;
+import android.text.style.ForegroundColorSpan;
+import android.text.style.StyleSpan;
 
 import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class JarvisCodeTools {
     private static final String PREF_LAST_CODE_SNIPPET = "last_ai_code_snippet_v29";
@@ -24,9 +32,8 @@ public final class JarvisCodeTools {
         if (context == null) {
             return "";
         }
-        String value = context.getSharedPreferences(JarvisCommandCenter.PREFS_NAME, Context.MODE_PRIVATE)
+        return context.getSharedPreferences(JarvisCommandCenter.PREFS_NAME, Context.MODE_PRIVATE)
                 .getString(PREF_LAST_CODE_SNIPPET, "");
-        return value == null ? "" : value;
     }
 
     public static void clearLastCodeSnippet(Context context) {
@@ -44,60 +51,40 @@ public final class JarvisCodeTools {
             return false;
         }
         String value = lower.toLowerCase(Locale.UK);
-        return value.indexOf("code") >= 0
-                || value.indexOf("script") >= 0
-                || value.indexOf("function") >= 0
-                || value.indexOf("class ") >= 0
-                || value.indexOf("java") >= 0
-                || value.indexOf("python") >= 0
-                || value.indexOf("bash") >= 0
-                || value.indexOf("shell") >= 0
-                || value.indexOf("termux") >= 0
-                || value.indexOf("xml") >= 0
-                || value.indexOf("html") >= 0
-                || value.indexOf("css") >= 0
-                || value.indexOf("javascript") >= 0
-                || value.indexOf("gradle") >= 0
-                || value.indexOf("manifest") >= 0
-                || value.indexOf("snippet") >= 0
-                || value.indexOf("compile") >= 0
-                || value.indexOf("fix this error") >= 0
-                || value.indexOf("give me the code") >= 0
-                || value.indexOf("write me code") >= 0
-                || value.indexOf("make me code") >= 0
-                || value.indexOf("create code") >= 0
-                || value.indexOf("apk") >= 0
-                || value.indexOf("aide") >= 0;
+        return containsAny(value, new String[] {
+                " code", "script", "java", "xml", "layout", "snippet", "source code",
+                "termux", "bash", "shell script", "androidmanifest", "manifest",
+                "make me a", "write me a", "give me the code", "give me code", "example project"
+        });
     }
 
     public static String extractFirstCodeBlock(String text) {
-        if (text == null) {
+        if (text == null || text.length() == 0) {
             return "";
         }
-        String best = "";
         int index = 0;
-        while (index < text.length()) {
-            int first = text.indexOf("```", index);
-            if (first < 0) {
+        String best = "";
+        while (true) {
+            int start = text.indexOf("```", index);
+            if (start < 0) {
                 break;
             }
-            int start = first + 3;
-            int end = text.indexOf("```", start);
+            int afterTicks = start + 3;
+            int lineEnd = text.indexOf('\n', afterTicks);
+            if (lineEnd < 0) {
+                break;
+            }
+            int end = text.indexOf("```", lineEnd + 1);
             if (end < 0) {
                 break;
             }
-            String inside = text.substring(start, end);
-            inside = inside.replace('\r', '\n');
-            int newline = inside.indexOf('\n');
-            if (newline >= 0) {
-                String possibleLanguage = inside.substring(0, newline).trim();
-                if (isLanguageMarker(possibleLanguage)) {
-                    inside = inside.substring(newline + 1);
+            String block = text.substring(lineEnd + 1, end);
+            String marker = text.substring(afterTicks, lineEnd).trim();
+            if (block.length() > 0 && block.length() >= best.length()) {
+                if (!isLanguageMarker(marker) && marker.length() > 0) {
+                    block = marker + "\n" + block;
                 }
-            }
-            inside = trimBlankLines(inside);
-            if (inside.length() > best.length()) {
-                best = inside;
+                best = trimBlankLines(block);
             }
             index = end + 3;
         }
@@ -111,40 +98,122 @@ public final class JarvisCodeTools {
         StringBuilder builder = new StringBuilder();
         int index = 0;
         while (index < text.length()) {
-            int first = text.indexOf("```", index);
-            if (first < 0) {
+            int start = text.indexOf("```", index);
+            if (start < 0) {
                 builder.append(text.substring(index));
                 break;
             }
-            builder.append(text.substring(index, first));
-            int end = text.indexOf("```", first + 3);
+            builder.append(text.substring(index, start));
+            int lineEnd = text.indexOf('\n', start + 3);
+            if (lineEnd < 0) {
+                break;
+            }
+            int end = text.indexOf("```", lineEnd + 1);
             if (end < 0) {
                 break;
             }
             index = end + 3;
         }
-        String result = builder.toString().replace('\r', ' ').replace('\n', ' ').trim();
-        while (result.indexOf("  ") >= 0) {
-            result = result.replace("  ", " ");
-        }
-        return result;
+        return builder.toString();
     }
 
-    public static String buildSpokenSummaryForCode(String fullText) {
-        String stripped = stripCodeBlocks(fullText);
+    public static String buildSpokenSummaryForCode(String text) {
+        String stripped = stripCodeBlocks(text).replace('\r', ' ').replace('\n', ' ').trim();
+        while (stripped.indexOf("  ") >= 0) {
+            stripped = stripped.replace("  ", " ");
+        }
         if (stripped.length() == 0) {
-            return "I have prepared the code snippet below. Press Copy Code to copy it.";
+            return "I prepared the code snippet.";
         }
         if (stripped.length() > 220) {
             stripped = stripped.substring(0, 220).trim() + "...";
         }
-        if (stripped.toLowerCase(Locale.UK).indexOf("copy code") < 0) {
-            stripped = stripped + " Copy Code is available below.";
-        }
         return stripped;
     }
 
-    private static boolean isLanguageMarker(String value) {
+    public static CharSequence highlightCodeSnippet(String code) {
+        String safe = code == null ? "" : code;
+        SpannableStringBuilder builder = new SpannableStringBuilder(safe);
+        if (safe.length() == 0) {
+            return builder;
+        }
+        applyComments(builder, safe);
+        applyStrings(builder, safe);
+        if (looksLikeXml(safe)) {
+            applyPattern(builder, safe, Pattern.compile("</?[A-Za-z0-9_:-]+"), Color.rgb(97, 175, 239), Typeface.BOLD);
+            applyPattern(builder, safe, Pattern.compile("\\b[A-Za-z_:][A-Za-z0-9_:-]*(?=\\=)"), Color.rgb(209, 154, 102), Typeface.BOLD);
+            applyPattern(builder, safe, Pattern.compile("(?<![A-Za-z0-9_])(true|false|null)(?![A-Za-z0-9_])"), Color.rgb(198, 120, 221), Typeface.BOLD);
+        } else {
+            String[] keywords = new String[] {
+                    "public", "private", "protected", "class", "static", "final", "void", "int", "long", "float", "double",
+                    "boolean", "char", "byte", "short", "new", "return", "if", "else", "for", "while", "do", "switch", "case",
+                    "break", "continue", "try", "catch", "finally", "throw", "throws", "extends", "implements", "import", "package",
+                    "null", "true", "false", "this", "super", "String", "Context", "Activity", "Intent", "View", "LinearLayout",
+                    "echo", "cd", "mkdir", "cp", "mv", "rm", "chmod", "bash", "sh", "fi", "then", "done", "function", "export",
+                    "gradle", "android", "manifest"
+            };
+            applyKeywordSet(builder, safe, keywords, Color.rgb(198, 120, 221), Typeface.BOLD);
+            applyPattern(builder, safe, Pattern.compile("(?<![A-Za-z0-9_])@[A-Za-z0-9_]+"), Color.rgb(97, 175, 239), Typeface.BOLD);
+        }
+        applyPattern(builder, safe, Pattern.compile("(?<![A-Za-z0-9_])(0x[0-9A-Fa-f]+|\\d+)(?![A-Za-z0-9_])"), Color.rgb(229, 192, 123), Typeface.NORMAL);
+        return builder;
+    }
+
+    private static boolean looksLikeXml(String code) {
+        String safe = code == null ? "" : code.trim();
+        return safe.startsWith("<") || safe.indexOf("</") >= 0 || safe.indexOf("/>") >= 0;
+    }
+
+    private static void applyComments(SpannableStringBuilder builder, String code) {
+        applyPattern(builder, code, Pattern.compile("//[^\n\r]*"), Color.rgb(92, 99, 112), Typeface.ITALIC);
+        applyPattern(builder, code, Pattern.compile("/\\*([\\s\\S]*?)\\*/"), Color.rgb(92, 99, 112), Typeface.ITALIC);
+        applyPattern(builder, code, Pattern.compile("(?m)^\\s*#.*$"), Color.rgb(92, 99, 112), Typeface.ITALIC);
+    }
+
+    private static void applyStrings(SpannableStringBuilder builder, String code) {
+        applyPattern(builder, code, Pattern.compile("\"([^\"\\\\]|\\\\.)*\""), Color.rgb(152, 195, 121), Typeface.NORMAL);
+        applyPattern(builder, code, Pattern.compile("'([^'\\\\]|\\\\.)*'"), Color.rgb(152, 195, 121), Typeface.NORMAL);
+    }
+
+    private static void applyKeywordSet(SpannableStringBuilder builder, String code, String[] keywords, int color, int style) {
+        StringBuilder joined = new StringBuilder();
+        for (int i = 0; i < keywords.length; i++) {
+            if (i > 0) {
+                joined.append("|");
+            }
+            joined.append(Pattern.quote(keywords[i]));
+        }
+        Pattern keywordPattern = Pattern.compile("(?<![A-Za-z0-9_])(" + joined.toString() + ")(?![A-Za-z0-9_])");
+        applyPattern(builder, code, keywordPattern, color, style);
+    }
+
+    private static void applyPattern(SpannableStringBuilder builder, String code, Pattern pattern, int color, int style) {
+        Matcher matcher = pattern.matcher(code);
+        while (matcher.find()) {
+            int start = matcher.start();
+            int end = matcher.end();
+            if (start >= 0 && end > start && end <= builder.length()) {
+                builder.setSpan(new ForegroundColorSpan(color), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                if (style != Typeface.NORMAL) {
+                    builder.setSpan(new StyleSpan(style), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                }
+            }
+        }
+    }
+
+    private static boolean containsAny(String value, String[] matches) {
+        if (value == null || matches == null) {
+            return false;
+        }
+        for (int i = 0; i < matches.length; i++) {
+            if (value.indexOf(matches[i]) >= 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static boolean isLanguageMarker(String value) {
         if (value == null) {
             return false;
         }

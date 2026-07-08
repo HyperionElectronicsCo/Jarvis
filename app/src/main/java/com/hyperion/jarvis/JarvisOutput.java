@@ -9,4 +9,6 @@ public interface JarvisOutput {
     void onStopListeningRequested();
     void onBackgroundStateChanged(boolean enabled);
     void onAsyncResponse(String text);
+    void onImageGenerated(byte[] imageBytes, String mimeType, String suggestedFileName);
+    void onClearGeneratedImage();
 }

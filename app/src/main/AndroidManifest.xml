@@ -14,6 +14,9 @@
     <uses-permission android:name="android.permission.SET_ALARM" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-permission android:name="android.permission.SEND_SMS" />
     <!-- Optional: if granted by the user, this helps Android allow Jarvis to open apps from the background on stricter ROMs. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- Required on Android 11+ so Jarvis can see and open installed launcher apps by spoken name. -->
@@ -52,6 +55,14 @@
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="false"
             android:screenOrientation="portrait" />
+
+
+
+        <provider
+            android:name=".JarvisImageShareProvider"
+            android:authorities="com.hyperion.jarvis.imageprovider"
+            android:exported="false"
+            android:grantUriPermissions="true" />
 
         <activity
             android:name=".JarvisYouTubeResolverActivity"

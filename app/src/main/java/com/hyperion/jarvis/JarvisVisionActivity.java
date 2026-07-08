@@ -4,11 +4,14 @@ import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.media.FaceDetector;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.AsyncTask;
 import android.provider.MediaStore;
+import java.io.File;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
@@ -18,7 +21,7 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-public class JarvisVisionActivity extends Activity implements View.OnClickListener {
+public class JarvisVisionActivity extends Activity implements View.OnClickListener, JarvisOnlineBrain.VisionCallback {
     public static final String EXTRA_MODE = "mode";
     public static final String EXTRA_LABEL = "label";
     public static final String MODE_OBJECT = "object";
@@ -38,6 +41,11 @@ public class JarvisVisionActivity extends Activity implements View.OnClickListen
     private String mode;
     private String label;
     private String lastProductQuery;
+    private String lastLocalResult;
+    private Bitmap lastBitmap;
+    private Uri pendingCameraUri;
+    private File pendingCameraFile;
+    private boolean autoLensLaunched;
 
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -137,10 +145,7 @@ public class JarvisVisionActivity extends Activity implements View.OnClickListen
                 launchCamera();
             }
         } else if (id == 2) {
-            boolean opened = JarvisVisionEngine.openGoogleLens(this);
-            if (!opened) {
-                Toast.makeText(this, "Google Lens could not be opened", Toast.LENGTH_SHORT).show();
-            }
+            openLensForLastImage(true);
         } else if (id == 3) {
             if (lastProductQuery == null || lastProductQuery.length() == 0) {
                 lastProductQuery = "unknown product from camera image";
@@ -154,10 +159,42 @@ public class JarvisVisionActivity extends Activity implements View.OnClickListen
 
     private void launchCamera() {
         try {
+            pendingCameraFile = JarvisImageShareProvider.createImageFile(this, "jarvis_camera_capture");
+            pendingCameraUri = pendingCameraFile == null ? null : JarvisImageShareProvider.getUriForFile(pendingCameraFile);
             Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+            if (pendingCameraUri != null) {
+                intent.putExtra(MediaStore.EXTRA_OUTPUT, pendingCameraUri);
+                intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                grantCameraWritePermissions(intent, pendingCameraUri);
+                resultView.setText("Opening camera in full-resolution product mode. Take a clear photo filling the frame with the item label.");
+            } else {
+                resultView.setText("Opening camera in thumbnail mode. Full-resolution capture could not be prepared.");
+            }
             startActivityForResult(intent, REQUEST_CAMERA);
         } catch (Exception error) {
+            pendingCameraUri = null;
+            pendingCameraFile = null;
             resultView.setText("Camera app could not be opened: " + error.getMessage());
+        }
+    }
+
+    private void grantCameraWritePermissions(Intent intent, Uri uri) {
+        if (intent == null || uri == null) {
+            return;
+        }
+        try {
+            java.util.List activities = getPackageManager().queryIntentActivities(intent, 0);
+            for (int i = 0; activities != null && i < activities.size(); i++) {
+                Object item = activities.get(i);
+                if (item instanceof android.content.pm.ResolveInfo) {
+                    android.content.pm.ResolveInfo info = (android.content.pm.ResolveInfo) item;
+                    if (info.activityInfo != null && info.activityInfo.packageName != null) {
+                        grantUriPermission(info.activityInfo.packageName, uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    }
+                }
+            }
+        } catch (Exception ignored) {
         }
     }
 
@@ -185,19 +222,60 @@ public class JarvisVisionActivity extends Activity implements View.OnClickListen
             handleBarcodeResult(resultCode, data);
             return;
         }
-        if (requestCode == REQUEST_CAMERA && resultCode == RESULT_OK && data != null && data.getExtras() != null) {
-            Object object = data.getExtras().get("data");
-            if (object instanceof Bitmap) {
-                Bitmap bitmap = (Bitmap) object;
+        if (requestCode == REQUEST_CAMERA && resultCode == RESULT_OK) {
+            Bitmap bitmap = loadCapturedBitmap(data);
+            if (bitmap != null) {
+                lastBitmap = bitmap;
+                autoLensLaunched = false;
                 imageView.setImageBitmap(bitmap);
                 String result = analyseBitmap(bitmap);
+                lastLocalResult = result;
                 resultView.setText(result);
-                Toast.makeText(this, "Jarvis vision complete", Toast.LENGTH_SHORT).show();
+                requestBridgeVision(bitmap);
+                requestAdvancedVision(bitmap);
+                scheduleAutomaticLensIfNeeded(bitmap);
+                Toast.makeText(this, "Jarvis vision analysis started", Toast.LENGTH_SHORT).show();
             } else {
-                resultView.setText("The camera did not return an image thumbnail.");
+                resultView.setText("The camera returned no usable image. Try Capture Again and keep the item label large in the frame.");
             }
         } else {
             resultView.setText("Camera capture cancelled.");
+        }
+    }
+
+    private Bitmap loadCapturedBitmap(Intent data) {
+        Bitmap full = decodePendingCameraFile();
+        if (full != null) {
+            return full;
+        }
+        if (data != null && data.getExtras() != null) {
+            Object object = data.getExtras().get("data");
+            if (object instanceof Bitmap) {
+                return (Bitmap) object;
+            }
+        }
+        return null;
+    }
+
+    private Bitmap decodePendingCameraFile() {
+        if (pendingCameraFile == null || !pendingCameraFile.exists() || pendingCameraFile.length() <= 0) {
+            return null;
+        }
+        try {
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(pendingCameraFile.getAbsolutePath(), bounds);
+            int sample = 1;
+            int largest = Math.max(bounds.outWidth, bounds.outHeight);
+            while (largest / sample > 1600) {
+                sample *= 2;
+            }
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inSampleSize = Math.max(1, sample);
+            options.inPreferredConfig = Bitmap.Config.ARGB_8888;
+            return BitmapFactory.decodeFile(pendingCameraFile.getAbsolutePath(), options);
+        } catch (Exception ignored) {
+            return null;
         }
     }
 
@@ -264,19 +342,149 @@ public class JarvisVisionActivity extends Activity implements View.OnClickListen
             return JarvisFaceStore.recognise(this, signature);
         }
         if (MODE_PRODUCT.equals(mode)) {
+            String knownProduct = JarvisVisionEngine.guessKnownProduct(bitmap);
             lastProductQuery = JarvisVisionEngine.buildProductSearchQuery(bitmap);
-            boolean opened = JarvisVisionEngine.openGoogleLens(this);
-            String result = JarvisVisionEngine.buildSceneDescription(bitmap, faceCount);
-            result += "\n\nProduct search hint: " + lastProductQuery + ".";
-            if (opened) {
-                result += "\n\nI opened Google Lens/visual search for stronger product identification.";
+            StringBuilder result = new StringBuilder();
+            result.append("Product Vision captured.");
+            result.append("\n\nLocal product hint:\n");
+            result.append(JarvisVisionEngine.buildProductRecognitionHint(bitmap));
+            result.append("\n\nSearch query: ").append(lastProductQuery).append('.');
+            if (knownProduct != null && knownProduct.length() > 0) {
+                result.append("\n\nLocal classification confidence: medium. AI vision and Lens will still be used for stronger identification.");
             } else {
-                result += "\n\nGoogle Lens was not available. Tap Search Product Web to search from the extracted visual hint.";
+                result.append("\n\nLocal classification confidence: low. AI vision and Lens will be used for stronger identification.");
             }
-            return result;
+            result.append("\n\nRunning ML Kit OCR, ML Kit object/image recognition, optional Lens API, and AI image recognition now. Jarvis is using the full-resolution camera file where available, so product labels should be easier to identify.");
+            result.append("\n\nIf the automatic recognisers are still weak, press OPEN GOOGLE LENS / VISUAL SEARCH to send this exact image to Lens, or SEARCH PRODUCT WEB for a strict product/image search.");
+            return result.toString();
         }
         return JarvisVisionEngine.buildSceneDescription(bitmap, faceCount);
     }
+
+
+    private void requestBridgeVision(final Bitmap bitmap) {
+        if (bitmap == null || !MODE_PRODUCT.equals(mode)) {
+            return;
+        }
+        new AsyncTask<Void, Void, JarvisVisionBridgeResult>() {
+            protected JarvisVisionBridgeResult doInBackground(Void... params) {
+                return JarvisVisionPipeline.identify(JarvisVisionActivity.this, bitmap, true);
+            }
+
+            protected void onPostExecute(JarvisVisionBridgeResult result) {
+                if (result == null || resultView == null) {
+                    return;
+                }
+                if (result.label != null && result.label.length() > 0 && !"unknown object".equals(result.label)) {
+                    lastProductQuery = result.label + " product exact model brand photo";
+                }
+                String current = resultView.getText() == null ? "" : resultView.getText().toString();
+                String text = result.toDisplayText();
+                if (text == null || text.length() == 0) {
+                    return;
+                }
+                appendToResult(current, "Vision pipeline:\n" + text);
+            }
+        }.execute();
+    }
+
+    private void requestAdvancedVision(Bitmap bitmap) {
+        if (bitmap == null) {
+            return;
+        }
+        boolean productMode = MODE_PRODUCT.equals(mode);
+        JarvisOnlineBrain.requestVisionRecognition(this, bitmap, productMode, this);
+    }
+
+    private void scheduleAutomaticLensIfNeeded(final Bitmap bitmap) {
+        if (!MODE_PRODUCT.equals(mode) || bitmap == null || resultView == null) {
+            return;
+        }
+        resultView.postDelayed(new Runnable() {
+            public void run() {
+                if (!MODE_PRODUCT.equals(mode) || bitmap != lastBitmap || autoLensLaunched || resultView == null) {
+                    return;
+                }
+                String current = resultView.getText() == null ? "" : resultView.getText().toString();
+                appendToResult(current, "Full-resolution image is ready. Jarvis has run local/AI product recognition. Press OPEN GOOGLE LENS / VISUAL SEARCH if you want to hand this exact image to Lens.");
+            }
+        }, 2200);
+    }
+
+    private void openLensForLastImage(boolean showToast) {
+        if (lastBitmap == null) {
+            if (showToast) {
+                Toast.makeText(this, "Capture an image first", Toast.LENGTH_SHORT).show();
+            }
+            return;
+        }
+        autoLensLaunched = true;
+        String query = lastProductQuery == null || lastProductQuery.length() == 0 ? "unknown product from camera image" : lastProductQuery;
+        boolean opened = JarvisVisionEngine.openGoogleLens(this, lastBitmap, query);
+        if (resultView != null) {
+            String current = resultView.getText() == null ? "" : resultView.getText().toString();
+            if (opened) {
+                appendToResult(current, "Visual search launched with the captured full-resolution image. If Android shows a chooser, pick Google Lens or Google.");
+            } else {
+                appendToResult(current, "Google Lens could not be launched. Use SEARCH PRODUCT WEB for a strict fallback search.");
+            }
+        }
+        if (showToast && !opened) {
+            Toast.makeText(this, "Google Lens could not be opened", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void appendToResult(String current, String message) {
+        if (resultView == null) {
+            return;
+        }
+        if (current == null) {
+            current = "";
+        }
+        resultView.setText(current + "\n\n" + message);
+    }
+
+    public void onVisionResult(final String text) {
+        runOnUiThread(new Runnable() {
+            public void run() {
+                String value = text == null ? "" : text.trim();
+                if (value.length() == 0) {
+                    return;
+                }
+                StringBuilder builder = new StringBuilder();
+                if (lastLocalResult != null && lastLocalResult.length() > 0) {
+                    builder.append(lastLocalResult).append("\n\n");
+                }
+                if (MODE_PRODUCT.equals(mode) && isBadVisionFallbackResponse(value)) {
+                    String current = resultView.getText() == null ? "" : resultView.getText().toString();
+                    appendToResult(current, "AI recognition did not accept the captured image from this provider. Keeping the local/product-vision result and using Lens or product web search as fallback.");
+                    return;
+                }
+                builder.append("AI recognition:\n").append(value);
+                resultView.setText(builder.toString());
+                if (MODE_PRODUCT.equals(mode) && value.toLowerCase().indexOf("likely product:") >= 0) {
+                    String firstLine = value.split("\\n")[0].trim();
+                    if (firstLine.toLowerCase().startsWith("likely product:")) {
+                        lastProductQuery = firstLine.substring("likely product:".length()).trim();
+                    }
+                }
+            }
+        });
+    }
+
+
+    private boolean isBadVisionFallbackResponse(String value) {
+        if (value == null) {
+            return false;
+        }
+        String lower = value.toLowerCase();
+        return lower.indexOf("no photo was provided") >= 0
+                || lower.indexOf("no image was provided") >= 0
+                || lower.indexOf("upload an image") >= 0
+                || lower.indexOf("can't identify the item because no photo") >= 0
+                || lower.indexOf("cannot identify the item because no photo") >= 0;
+    }
+
 
     private int detectFaces(Bitmap source) {
         try {

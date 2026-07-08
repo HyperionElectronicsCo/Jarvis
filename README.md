@@ -4,13 +4,50 @@
   <img src="assets/jarvis-hud-preview.png" alt="J.A.R.V.I.S Android Assistant HUD preview" width="360" />
 </p>
 
+---
+
 <p align="center">
-<b>GET API KEY HERE</b>
-https://bazaarlink.ai/
-Then 
-  "OPEN AI SETTINGS/SETUP AI"
-  COPY FROM CLIPBOARD, VERIFY KEY IS ACTIVE, CLOSE SETUP, ENJOY
+  <b>GET API KEY HERE</b><br />
+  <a href="https://bazaarlink.ai/">https://bazaarlink.ai/</a><br />
+  Then say/type <b>OPEN AI SETTINGS</b> or <b>SETUP AI</b>, copy/import your key from clipboard, verify the key is active, close setup, enjoy.
 </p>
+
+<p align="center">
+  <b>Other supported AI / Lens API key options</b><br />
+  Jarvis supports OpenAI-compatible providers by changing the provider/base URL, API key, and model in AI Setup. Lens/product APIs can be configured with the Lens API commands.
+</p>
+
+<div align="center">
+
+| Provider | What it is useful for | Key / setup link | Typical base URL / notes |
+|---|---|---|---|
+| **BazaarLink AI** | Free/OpenAI-compatible chat and model gateway. Good default for Jarvis. | <a href="https://bazaarlink.ai/">Get BazaarLink key</a> | `https://bazaarlink.ai/api/v1` / try model `auto:free` |
+| **OpenAI** | Strong general AI, coding, vision, and image models when you have credits. | <a href="https://platform.openai.com/api-keys">OpenAI API keys</a> | `https://api.openai.com/v1` |
+| **OpenRouter** | One key for many model providers through an OpenAI-compatible endpoint. | <a href="https://openrouter.ai/settings/keys">OpenRouter keys</a> | `https://openrouter.ai/api/v1` |
+| **Google Gemini / AI Studio** | Gemini models through Google’s OpenAI-compatible endpoint. | <a href="https://aistudio.google.com/app/apikey">Google AI Studio key</a> | `https://generativelanguage.googleapis.com/v1beta/openai/` |
+| **Groq** | Very fast OpenAI-compatible chat inference. | <a href="https://console.groq.com/keys">Groq keys</a> | `https://api.groq.com/openai/v1` |
+| **Together AI** | OpenAI-compatible models, including chat, vision, image generation, TTS, embeddings. | <a href="https://api.together.ai/settings/api-keys">Together API keys</a> | `https://api.together.xyz/v1` or provider docs URL |
+| **Hugging Face Inference Providers** | Unified OpenAI-compatible endpoint for multiple inference providers. | <a href="https://huggingface.co/settings/tokens">Hugging Face tokens</a> | OpenAI-compatible Inference Providers endpoint |
+| **SerpApi Google Lens API** | Stronger visual/product matching via structured Google Lens results. | <a href="https://serpapi.com/google-lens-api">SerpApi Lens API</a> | Use with Jarvis Lens API URL/key commands |
+| **Apify Google Lens actors** | Google Lens/reverse-image scraping actors with JSON results. | <a href="https://apify.com/api/google-lens-api">Apify Google Lens API</a> | Use with Jarvis Lens API URL/key commands |
+| **Pollinations** | No-key fallback for some text/image generation tasks. | <a href="https://pollinations.ai/">Pollinations</a> | Built in as fallback; free endpoints may queue/rate-limit |
+
+</div>
+
+Useful setup commands inside Jarvis:
+
+```text
+open AI setup
+setup AI
+import keys from clipboard
+test active key
+use first working key
+set lens api url https://your-lens-endpoint-here
+set lens api key YOUR_KEY
+lens api status
+clear lens api
+```
+
 
 <p align="center">
   <b>A lightweight Android voice assistant with a cinematic J.A.R.V.I.S-style HUD, wake phrase control, app launching, phone navigation, media controls, search, maps, and background listening.</b>
@@ -654,3 +691,286 @@ okay Jarvis clear conversation memory
 ```
 
 New code snippets now visually refresh: Jarvis hides/clears the old code box first, then shows the new snippet so it is obvious that the code changed.
+
+
+## Jarvis v32 Images + Highlighting
+
+Jarvis now adds syntax highlighting in the code snippet panel and can generate images from prompts such as `generate an image of a black Labrador puppy`. Generated images appear inside Jarvis and can be tapped to save through the Android file picker.
+
+
+## Jarvis v33 Vision Repair + Product Recognition
+
+- Fixes the `JarvisOnlineBrain.java` brace/compiler issue.
+- Fixes the `JarvisAISetupActivity.java` `onImageGenerated(...)` interface issue.
+- Adds stronger AI-based vision product recognition using the configured AI key.
+- Adds better product fallback heuristics, including a Monster Energy can hint.
+- Product camera mode now updates the result with an AI recognition section after the local scan completes.
+
+
+## Jarvis v34 Image Model Fallback
+
+Image generation now tries several image model names automatically instead of failing immediately when the selected provider rejects `gpt-image-1`. For non-OpenAI-compatible catalogs it tries DALL-E style model IDs first, then OpenAI-prefixed fallbacks, and gives a clearer provider-support message if no image model is accepted.
+
+
+## Jarvis v35 Free Image Fallback
+
+- Automatic free image-generation fallback added.
+- If the current provider rejects the image model or the API key is invalid, Jarvis now tries a no-key fallback image generator automatically.
+- This fallback is aimed at keeping commands like `generate an image of a black Labrador puppy` working even when the main provider fails.
+
+
+## Jarvis v36 Product Vision Repair
+
+- Improves local product/object classification for common items such as over-ear headphones, smartphones/tablets, drink cans and bottles.
+- Product Vision now displays a stricter likely object result instead of only generic colour/edge text.
+- Google Lens launching now tries to pass the captured bitmap/image to Lens/Google visual search instead of only opening the Google app home page.
+- Search Product Web now uses image-search style Google results for product identification.
+- AI vision prompt was tightened so it names visible objects directly and avoids abstract descriptions.
+
+
+## Jarvis v37 Clear Generated Image
+
+Generated images can now be dismissed from the Jarvis UI. The image panel includes a **CLEAR GENERATED IMAGE** button, and these voice/text commands are supported:
+
+```text
+okay Jarvis clear generated image
+okay Jarvis remove generated image
+okay Jarvis hide generated image
+```
+
+Clearing removes the displayed image and deletes the pending generated image from local app storage.
+
+
+## Jarvis v38 Product Vision Fix
+
+- Improved local smartphone/tablet vs headphones detection.
+- Product Vision no longer auto-launches generic Google home during capture.
+- Lens button now sends the captured image through Lens/visual chooser where possible.
+- Product web search now opens a strict Google Images product-identification query.
+
+
+## Jarvis v39 Product Vision / Visual Search Repair
+
+- Improves black smartphone/tablet detection so a phone is not labelled as unknown or headphones.
+- Google Lens/Visual Search now avoids the generic Google app image intent that caused "Unable to open image".
+- If real Lens is unavailable, Jarvis opens a strict Google Images product search instead.
+- Product search queries now use stronger object/model/brand wording.
+
+
+## Jarvis v40 Free Image + AI Vision Fallbacks
+
+- Adds a wider collective of no-key image generation fallback endpoints/models after the configured provider fails.
+- Adds no-key AI vision fallback for `what is this item` / Product Vision when the configured provider fails or no AI key is active.
+- Product Vision now sends the captured image to the configured AI provider first when available, then tries a free AI vision fallback before settling for local hints.
+
+
+## Jarvis v41 Image Fallback Compile Repair
+
+- Fixes the AIDE compile error in `JarvisOnlineBrain.java` where `URLEncoder.encode(...)` created a checked exception in the free image fallback URL builder.
+- Keeps the v40 free image fallback and AI vision fallback behaviour.
+
+
+## Jarvis v42 Anonymous LLM Fallback
+
+Jarvis now tries anonymous OpenAI-compatible chat fallback providers after the configured provider fails, rate-limits, runs out of usable credit, or has no active key. It tries the configured provider first, then OVHcloud AI Endpoints anonymous models, then Pollinations text fallback models.
+
+## Jarvis v43 / 1.4.3 Image Search Fallback
+
+- Version naming now uses `1.4.3` style rather than `1.43`.
+- Added web image result fallback for commands like `okay Jarvis give me an image of a black Labrador puppy`.
+- Added follow-up image navigation commands: `another one`, `not that one`, and `give me another one`.
+- If AI image generation runs out of credits or the provider rejects the model, Jarvis now falls back to image-search results instead of only reporting failure.
+
+## Jarvis v44 Web Image Display Repair
+
+- Fixes web image fallback so Jarvis tries harder to download actual image bytes instead of speaking/opening a raw URL.
+- Adds direct image fallback candidates after Google/Bing scraping, including semantic image services and free image fallback endpoints.
+- `another one` / `not that one` cycles through more candidate image sources.
+- Error messages no longer read long image URLs aloud when a candidate fails.
+- Version name is now `1.4.4`.
+
+
+## Jarvis v45 Web Image Relevance Repair
+
+Improves `give me an image of ...` by using stricter image candidate sources, better relevance ranking, Wikimedia/DuckDuckGo/Bing/Google candidate scraping, and avoids generic random fallback image services that caused unrelated first images. Version is now 1.4.5.
+
+
+## Jarvis v46 Image Search Accuracy Repair
+
+Improves `give me an image of ...` and `show me an image of ...` so web-image fallback is much stricter about relevance.
+
+What changed:
+- adds stronger query-aware ranking for web image results
+- adds structured DuckDuckGo and Wikimedia image candidate parsing
+- adds smarter search query variants for things like `Tom and Jerry`, `rhino`, and `labrador puppy`
+- filters out off-topic transport/random image matches when the query is clearly about something else
+- deduplicates repeated image candidates so `another one` is more likely to show a genuinely different image
+- bumps app version to `1.4.6`
+
+
+## Jarvis v47 Location Image Search Enforcement Repair
+
+Improves web image fallback when you ask for places or countries, for example `show me an image of the Philippines`.
+
+What changed:
+- adds direct Wikipedia page-image lookup before looser search scraping
+- adds stricter country/location query detection
+- boosts country/travel/location matches and penalizes unrelated plants, products, and transport images
+- improves search query variants for countries and places
+- bumps app version to `1.4.7`
+
+
+## Jarvis v48 AI Error Display + Speech Control Repair
+
+Fixes noisy AI fallback errors appearing around image requests and improves long output handling.
+
+What changed:
+- image search/generation commands are routed before generic AI handling, so `show me an image of ...` should not also trigger a chat AI fallback error
+- long AI/provider error output is no longer shortened with ellipses by Jarvis before display
+- responses over 30 words are displayed in full on screen/console but are not read out loud automatically
+- say `read that out loud` or `read the full output` if you want Jarvis to speak the last long response
+- background service also avoids speaking very long responses automatically
+- bumps app version to `1.4.8`
+
+
+## Jarvis v49 AI Fallback Cleanup
+
+Fixes the noisy AI fallback error shown when the configured provider is out of credits and the anonymous free providers are busy.
+
+What changed:
+- removes the broken OVH anonymous model-rotation path that was returning non-existent model errors
+- keeps Pollinations as a free fallback, but stops hammering it when the queue is full
+- adds a direct text fallback attempt before giving up
+- replaces huge provider/model error dumps with a useful summary telling the user whether the provider has no credits or the free queue is busy
+- keeps long AI answers displayed in full, but avoids treating long error dumps as useful assistant answers
+- bumps app version to `1.4.9`
+
+
+## Jarvis v50 Full Lens Compatibility + Auto Product Vision
+
+Version `1.5.0` improves Product Vision and Google Lens hand-off.
+
+What changed:
+- Product Vision now sends every captured product image to AI vision, even when no main AI key is configured, so free fallback vision can still try.
+- Product Vision automatically launches Google Lens / visual search after capture.
+- Lens hand-off now tries standalone Lens, the newer Lens search package, the Google app Lens implementation, Google Photos, Android image chooser, Lens URI fallbacks, then strict Google Images search.
+- Lens image sharing no longer depends on `resolveActivity()` returning a result, because some Android builds incorrectly return null even when Lens can handle the image.
+- Local product output is less vague while AI/Lens identification is running.
+- Keeps AIDE compatibility and no lambdas.
+
+
+## Jarvis v52 Vision Activity Compile Repair
+
+Fixes the broken `JarvisVisionActivity.java` source that caused hundreds of AIDE errors such as `Unexpected end of line`, `Missing ;`, `Missing )`, and unquoted `GOOGLE / LENS / VISUAL / SEARCH / PRODUCT` tokens. Product Vision, AI vision fallback, automatic Lens hand-off, Search Product Web, and QR/barcode scanning are kept. Version is now `1.5.2`.
+
+
+## Jarvis v53 Compile-Safe Vision Bridge
+
+Adds a staged vision pipeline for better item recognition without breaking AIDE compatibility.
+
+What changed:
+- Adds `JarvisVisionPipeline` and bridge classes for local vision, optional ML Kit, and future Lens API support.
+- Adds reflection-based ML Kit detection so the app still compiles even when ML Kit libraries are not bundled.
+- Product Vision now runs the bridge pipeline after capture and updates the screen with the strongest available result.
+- Keeps AI vision fallback and Google Lens handoff.
+- Version bumped to `1.5.3`.
+
+This patch intentionally does not force ML Kit Gradle dependencies yet. Once this bridge compiles on-device, the next patch can safely add the optional ML Kit dependency route.
+
+
+## Jarvis v54 Full Resolution Product Vision Repair
+
+Video analysis showed Product Vision was using a low-resolution camera thumbnail, then automatically handing the image to the Google app where it often landed on the Google home screen instead of a useful Lens result.
+
+Fixes:
+- captures a full-resolution camera image through a Jarvis content provider
+- decodes a scaled high-resolution bitmap for AI/local recognition
+- shares content:// image URIs instead of private file:// paths
+- stops automatic generic Google-app handoff that was dumping the user onto Google home
+- improves Lens handoff reliability through a dedicated Jarvis image provider
+- adds stronger local drink-can recognition including Pepsi/Pepsi Max style red/blue/white can cues
+- bumps version to 1.5.4
+
+
+## Jarvis v55 Product Label Recognition Repair
+
+Improves local Product Vision recognition for close-up branded drink cans, especially Pepsi / Pepsi Max-style cans where the full-resolution image includes the user’s hand and the can shape is not a perfect tall rectangle.
+
+Changes:
+- relaxes can/bottle shape thresholds for close-up camera captures
+- improves red/blue/silver packaging detection
+- returns `Pepsi Max / Pepsi drink can` when red/blue Pepsi-style cues are visible
+- prevents bad AI fallback responses like “no photo was provided” from replacing the useful local result
+- bumps version to `1.5.5`
+
+
+## Jarvis v56 Full ML Kit Product Vision
+
+Adds actual ML Kit dependencies and a stronger product-recognition pipeline.
+
+Changes:
+- bundles ML Kit image labelling, object detection, text recognition/OCR, and barcode scanning dependencies
+- ML Kit OCR now tries to read visible packaging text such as IRN-BRU, Pepsi, Coca-Cola, Monster, Red Bull, Sprite, Fanta, and similar brands
+- Product Vision now prefers strong ML Kit OCR/barcode hits before weaker generic labels
+- adds a real configurable Lens-style API bridge for self-hosted or third-party visual search endpoints
+- adds commands to set, check, or clear the Lens API endpoint/key
+- keeps local heuristic, AI vision, and Google Lens handoff fallbacks
+- bumps version to `1.5.6`
+
+
+## Jarvis v57 AIDE-Compatible OCR Compile Repair
+
+Fixes the v56 build errors reported in AIDE.
+
+Changes:
+- removes direct `com.google.mlkit:*` dependencies because newer ML Kit manifests can include directives that older AIDE/aapt cannot parse
+- adds AIDE-compatible Google Mobile Vision OCR dependency: `com.google.android.gms:play-services-vision:20.1.3`
+- keeps the reflective vision bridge architecture
+- adds Mobile Vision OCR fallback for visible packaging text such as IRN-BRU, Pepsi, Monster, Red Bull, etc.
+- fixes invalid Java character literals in `JarvisLensApiBridge.java`
+- bumps version to `1.5.7`
+
+
+## Jarvis v58 Direct Contact Calling
+
+Adds direct contact calling and learned contact matching.
+
+Changes:
+- `call mum` / `dial mum` now resolves the contact and uses ACTION_CALL when CALL_PHONE permission is granted.
+- If direct-call permission is missing, Jarvis asks for Contacts/Phone permission and falls back to the dialler.
+- If the spoken name is ambiguous, Jarvis lists similar phonebook matches and waits for `call option 1`, `option 2`, `first one`, etc.
+- Jarvis learns successful calls, so frequently used contacts are boosted for future mispronounced names.
+- Adds READ_CONTACTS and CALL_PHONE permissions.
+- Version bumped to `1.5.8`.
+
+
+## Jarvis v59 Contact Manager Compile Repair
+
+Fixes the AIDE compile error in `JarvisContactManager.java` where the new contact calling code called `JarvisOutput.log(...)`, which does not exist in the current Jarvis output interface. The repair now uses `onConsole(...)` for internal call diagnostics and keeps direct contact calling, contact choice follow-ups, and learned contact ranking. Version bumped to `1.5.9`.
+
+
+## Jarvis v60 SMS Contact Messaging
+
+Adds SMS/contact messaging compatibility alongside direct calling.
+
+Changes:
+- `text mum` opens the default SMS app for Mum.
+- `send mum a message` defaults to normal text message/SMS if no app is specified.
+- `text mum saying hello` opens SMS with the message pre-filled.
+- Similar-contact matching now works for texting too.
+- Follow-up choices now support `text option 1`, `message option 2`, `option 1`, etc.
+- Texting behaviour is learned alongside call behaviour, so frequently used contacts rank higher after repeated use.
+- Version bumped to `1.6.0`.
+
+## Jarvis v61 Confirmed Direct SMS Sending
+
+Adds direct SMS sending through Jarvis with a confirmation step.
+
+Examples:
+- `text mum saying I am on my way`
+- `send mum a message saying I will be there soon`
+- `yes` / `yes send it`
+- `edit` / `change it to ...`
+- `discard`
+
+Jarvis now prepares the SMS, reads/displays the message back, then only sends it after confirmation. It uses Android `SEND_SMS` permission and keeps the learned contact ranking from calls/texts.

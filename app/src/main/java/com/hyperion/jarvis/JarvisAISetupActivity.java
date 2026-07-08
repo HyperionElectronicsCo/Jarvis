@@ -326,6 +326,11 @@ public class JarvisAISetupActivity extends Activity implements JarvisOutput {
         appendLog("Code snippet cleared.");
     }
 
+    public void onClearGeneratedImage() {
+        JarvisImageStore.clearPendingImage(this);
+        appendLog("Generated image cleared.");
+    }
+
     public void onSavePendingProjectRequested() {
         appendLog("Open the main Jarvis screen to choose where to save a generated project ZIP.");
     }
@@ -342,5 +347,10 @@ public class JarvisAISetupActivity extends Activity implements JarvisOutput {
     public void onAsyncResponse(String text) {
         appendLog(text);
         refreshStatus();
+    }
+
+
+    public void onImageGenerated(byte[] imageBytes, String mimeType, String suggestedFileName) {
+        appendLog("Image generation completed. Open the main Jarvis screen to view and save it.");
     }
 }

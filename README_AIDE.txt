@@ -1,3 +1,17 @@
+Jarvis AIDE current notes
+==========================
+
+Current release in this package: v62 / 1.6.2.
+
+AI key setup:
+- Get a key from https://bazaarlink.ai/ or another OpenAI-compatible provider.
+- In Jarvis, say/type OPEN AI SETUP or SETUP AI.
+- Import key from clipboard, choose/set model, test active key, then close setup.
+
+Supported provider examples are listed in README.md.
+
+Legacy notes below are retained for project history.
+
 Jarvis AIDE v9 - YouTube Search + Conversation Upgrade
 =============================================================
 

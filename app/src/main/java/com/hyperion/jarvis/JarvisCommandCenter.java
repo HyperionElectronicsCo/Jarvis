@@ -96,7 +96,7 @@ public final class JarvisCommandCenter {
         JarvisConversationMemory.rememberUser(context, command);
 
         if (containsAny(lower, new String[] { "help", "commands", "what can you do" })) {
-            return "You can say okay Jarvis, then ask me anything once an AI key is imported, remember recent conversation context, create AIDE-compatible project ZIPs, open AI setup, import keys from clipboard, test AI connection, use a working AI key, get weather, set alarms and reminders, remember personal facts, fact check public facts, use camera vision, ask what is this, search products with visual/Lens support, scan QR codes and barcodes, recognise enrolled faces with the upgraded local face engine, identify songs through Shazam or SoundHound, resolve and play the first matching YouTube result, navigate somewhere, open installed apps, play music, control volume, control media, go home, go back, show recent apps, close the current app, pause listening, resume listening, or run in the background. I also understand voice variants like A I, API key, Chat G P T and key setup.";
+            return "You can say okay Jarvis, then ask me anything once an AI key is imported, remember recent conversation context, create AIDE-compatible project ZIPs, open AI setup, import keys from clipboard, test AI connection, use a working AI key, get weather, set alarms and reminders, remember personal facts, fact check public facts, use camera vision, ask what is this, search products with ML Kit OCR, object detection, optional Lens API, and visual/Lens support, scan QR codes and barcodes, recognise enrolled faces with the upgraded local face engine, identify songs through Shazam or SoundHound, resolve and play the first matching YouTube result, navigate somewhere, open installed apps, call contacts directly with learned contact matching, text contacts by SMS with learned matching, confirm/edit/discard SMS messages, and send confirmed texts directly, play music, control volume, control media, go home, go back, show recent apps, close the current app, pause listening, resume listening, or run in the background. I also understand voice variants like A I, API key, Chat G P T and key setup.";
         }
 
         String conversationMemoryResponse = handleConversationMemoryCommand(context, lower);
@@ -112,6 +112,25 @@ public final class JarvisCommandCenter {
         String memoryResponse = handleMemoryCommand(context, command, lower, output);
         if (memoryResponse != null) {
             return memoryResponse;
+        }
+
+        if (isNextImageResultCommand(lower)) {
+            if (JarvisOnlineBrain.requestNextSearchImage(context, output)) {
+                return "Showing another image now.";
+            }
+            return "I do not have an image search in progress yet. Say give me an image of followed by what you want to see.";
+        }
+
+        String earlyImageSearchPrompt = extractImageSearchPrompt(command, lower);
+        if (earlyImageSearchPrompt != null && earlyImageSearchPrompt.length() > 0) {
+            JarvisOnlineBrain.requestSearchImage(context, earlyImageSearchPrompt, output);
+            return "Finding an image of " + earlyImageSearchPrompt + ".";
+        }
+
+        String earlyImagePrompt = extractImageGenerationPrompt(command, lower);
+        if (earlyImagePrompt != null && earlyImagePrompt.length() > 0) {
+            JarvisOnlineBrain.requestImageGeneration(context, earlyImagePrompt, output);
+            return "Generating the image now. If the image services are unavailable, I will fall back to a web image search.";
         }
 
         String followUpAiResponse = handleFollowUpAICommand(context, command, lower, output);
@@ -182,6 +201,13 @@ public final class JarvisCommandCenter {
                 output.onClearCodeSnippet();
             }
             return "Code snippet cleared.";
+        }
+        if (isClearGeneratedImageCommand(lower)) {
+            JarvisImageStore.clearPendingImage(context);
+            if (output != null) {
+                output.onClearGeneratedImage();
+            }
+            return "Generated image cleared.";
         }
         if (isSavePendingProjectCommand(lower)) {
             if (output != null) {
@@ -299,10 +325,24 @@ public final class JarvisCommandCenter {
             return settingsResponse;
         }
 
+        if (JarvisContactManager.isSmsConfirmationResponse(context, lower)) {
+            String smsResponse = JarvisContactManager.handlePendingSmsResponse(context, command, lower, output);
+            if (smsResponse != null) {
+                return smsResponse;
+            }
+        }
+
+        if (JarvisContactManager.isFollowUpSelection(lower)) {
+            return JarvisContactManager.handleFollowUpSelection(context, command, output);
+        }
+
+        if (JarvisContactManager.looksLikeTextCommand(lower)) {
+            return JarvisContactManager.handleTextCommand(context, command, lower, output);
+        }
+
         String dialTarget = extractDialTarget(command, lower);
         if (dialTarget != null && dialTarget.length() > 0) {
-            openDialer(context, dialTarget, output);
-            return "Opening the dialer.";
+            return JarvisContactManager.handleCallCommand(context, dialTarget, output);
         }
 
         String appName = extractAppName(command, lower);
@@ -315,6 +355,19 @@ public final class JarvisCommandCenter {
             return "I could not find that app, so I searched for " + appName + ".";
         }
 
+        if (isNextImageResultCommand(lower)) {
+            if (JarvisOnlineBrain.requestNextSearchImage(context, output)) {
+                return "Showing another image now.";
+            }
+            return "I do not have an image search in progress yet. Say give me an image of followed by what you want to see.";
+        }
+
+        String imageSearchPrompt = extractImageSearchPrompt(command, lower);
+        if (imageSearchPrompt != null && imageSearchPrompt.length() > 0) {
+            JarvisOnlineBrain.requestSearchImage(context, imageSearchPrompt, output);
+            return "Finding an image of " + imageSearchPrompt + ".";
+        }
+
         if (isQuestion(lower)) {
             if (JarvisOnlineBrain.hasApiKey(context)) {
                 startAIRequest(context, command, lower, output);
@@ -322,6 +375,12 @@ public final class JarvisCommandCenter {
             }
             openWebSearch(context, command, output);
             return "I will search Google for that.";
+        }
+
+        String imagePrompt = extractImageGenerationPrompt(command, lower);
+        if (imagePrompt != null && imagePrompt.length() > 0) {
+            JarvisOnlineBrain.requestImageGeneration(context, imagePrompt, output);
+            return "Generating the image now. If the image services are unavailable, I will fall back to a web image search.";
         }
 
         if (shouldSendToAI(lower) && JarvisOnlineBrain.hasApiKey(context)) {
@@ -597,6 +656,27 @@ public final class JarvisCommandCenter {
 
         if (containsAny(lower, new String[] { "ai provider status", "provider status", "ai endpoint status", "base url status", "current ai provider", "current provider" })) {
             return "Provider: " + JarvisOnlineBrain.getProvider(context) + ". Base URL: " + JarvisOnlineBrain.getBaseUrl(context) + ". Model: " + JarvisOnlineBrain.getModel(context) + ".";
+        }
+
+        if (lower.startsWith("set lens api url ") || lower.startsWith("set visual search api url ") || lower.startsWith("set product lens api url ") || lower.startsWith("set google lens api url ")) {
+            String endpoint = extractAfterPrefix(command, lower, new String[] { "set lens api url ", "set visual search api url ", "set product lens api url ", "set google lens api url " });
+            JarvisLensApiBridge.setEndpoint(context, endpoint);
+            return "Lens API endpoint saved. Product Vision will send captured images to that endpoint before falling back to local recognition.";
+        }
+
+        if (lower.startsWith("set lens api key ") || lower.startsWith("set visual search api key ") || lower.startsWith("set product lens api key ") || lower.startsWith("set google lens api key ")) {
+            String key = extractAfterPrefix(command, lower, new String[] { "set lens api key ", "set visual search api key ", "set product lens api key ", "set google lens api key " });
+            JarvisLensApiBridge.setApiKey(context, key);
+            return "Lens API key saved locally on this device.";
+        }
+
+        if (containsAny(lower, new String[] { "lens api status", "visual search api status", "product lens api status", "google lens api status", "current lens api" })) {
+            return JarvisLensApiBridge.getStatus(context);
+        }
+
+        if (lower.startsWith("clear lens api") || lower.startsWith("delete lens api") || lower.startsWith("forget lens api") || lower.startsWith("clear visual search api")) {
+            JarvisLensApiBridge.clear(context);
+            return "Lens API endpoint and key removed from this device.";
         }
 
         if (lower.startsWith("clear ai keys") || lower.startsWith("clear keys") || lower.startsWith("delete ai keys") || lower.startsWith("delete keys") || lower.startsWith("forget ai keys") || lower.startsWith("forget keys") || lower.startsWith("remove ai keys") || lower.startsWith("remove keys")) {
@@ -950,11 +1030,141 @@ public final class JarvisCommandCenter {
         if (!JarvisConversationMemory.looksLikeFollowUpReference(value)) {
             return false;
         }
-        if (startsWithAny(value, new String[] { "open ", "launch ", "start ", "play ", "pause ", "stop ", "mute ", "unmute ", "volume ", "call ", "dial ", "navigate ", "directions " })) {
+        if (startsWithAny(value, new String[] { "open ", "launch ", "start ", "play ", "pause ", "stop ", "mute ", "unmute ", "volume ", "call ", "dial ", "text ", "sms ", "message ", "send text ", "send message ", "navigate ", "directions " })) {
             return false;
         }
         return containsAny(value, new String[] { "zip", "package", "packaged", "project", "app", "code", "file", "files", "full", "complete", "instead", "change", "make it", "put it", "need it", "that project", "that app", "previous" });
     }
+
+
+
+
+private static boolean isNextImageResultCommand(String lower) {
+    if (lower == null) {
+        return false;
+    }
+    String value = lower.trim();
+    return value.equals("another one")
+            || value.equals("not that one")
+            || value.equals("next image")
+            || value.equals("show another")
+            || value.equals("show me another")
+            || value.equals("give me another one")
+            || value.equals("different one")
+            || value.equals("a different one");
+}
+
+private static String extractImageSearchPrompt(String command, String lower) {
+    if (command == null) {
+        return null;
+    }
+    String original = command.trim();
+    String value = lower == null ? original.toLowerCase(Locale.UK) : lower.trim();
+    String[] prefixes = new String[] {
+            "give me an image of ",
+            "give me a picture of ",
+            "give me a photo of ",
+            "show me an image of ",
+            "show me a picture of ",
+            "show me a photo of ",
+            "find me an image of ",
+            "find me a picture of ",
+            "get me an image of ",
+            "get me a picture of ",
+            "pull up an image of ",
+            "pull up a picture of ",
+            "show an image of ",
+            "show a picture of ",
+            "can you give me an image of ",
+            "can you give me a picture of ",
+            "can you show me an image of ",
+            "can you show me a picture of ",
+            "could you give me an image of ",
+            "could you give me a picture of ",
+            "could you show me an image of ",
+            "could you show me a picture of ",
+            "please give me an image of ",
+            "please give me a picture of ",
+            "please show me an image of ",
+            "please show me a picture of "
+    };
+    for (int i = 0; i < prefixes.length; i++) {
+        String prefix = prefixes[i];
+        if (value.startsWith(prefix)) {
+            String result = original.substring(prefix.length()).trim();
+            if (result.length() > 0) {
+                return result;
+            }
+        }
+    }
+    return null;
+}
+
+private static String extractImageGenerationPrompt(String command, String lower) {
+    if (command == null) {
+        return null;
+    }
+    String original = command.trim();
+    String value = lower == null ? original.toLowerCase(Locale.UK) : lower.trim();
+    if (!isImageGenerationCommand(value)) {
+        return null;
+    }
+    String[] prefixes = new String[] {
+            "generate an image of ",
+            "generate an image for ",
+            "generate image of ",
+            "generate image for ",
+            "create an image of ",
+            "create an image for ",
+            "create image of ",
+            "create image for ",
+            "make an image of ",
+            "make an image for ",
+            "make image of ",
+            "make image for ",
+            "draw an image of ",
+            "draw image of ",
+            "draw me ",
+            "render an image of ",
+            "render image of ",
+            "picture of ",
+            "image of "
+    };
+    String trimmed = original;
+    String trimmedLower = value;
+    for (int i = 0; i < prefixes.length; i++) {
+        String prefix = prefixes[i];
+        if (trimmedLower.startsWith(prefix)) {
+            String result = trimmed.substring(prefix.length()).trim();
+            if (result.length() > 0) {
+                return result;
+            }
+        }
+    }
+    if (trimmedLower.startsWith("generate ") && trimmedLower.indexOf(" image") >= 0) {
+        return trimmed.substring("generate ".length()).trim();
+    }
+    return original;
+}
+
+private static boolean isImageGenerationCommand(String lower) {
+    if (lower == null || lower.length() == 0) {
+        return false;
+    }
+    return lower.startsWith("generate an image")
+            || lower.startsWith("generate image")
+            || lower.startsWith("create an image")
+            || lower.startsWith("create image")
+            || lower.startsWith("make an image")
+            || lower.startsWith("make image")
+            || lower.startsWith("draw me ")
+            || lower.startsWith("draw an image")
+            || lower.startsWith("draw image")
+            || lower.startsWith("render an image")
+            || lower.startsWith("render image")
+            || lower.startsWith("picture of ")
+            || lower.startsWith("image of ");
+}
 
     private static void startAIRequest(Context context, String command, String lower, JarvisOutput output) {
         String prompt = command == null ? "" : command;
@@ -2335,7 +2545,7 @@ public final class JarvisCommandCenter {
         if (isClearCodeSnippetCommand(value) || isSavePendingProjectCommand(value)) {
             return false;
         }
-        if (startsWithAny(value, new String[] { "open ", "launch ", "start ", "play ", "pause ", "stop ", "mute ", "unmute ", "volume ", "call ", "dial ", "navigate ", "directions " })) {
+        if (startsWithAny(value, new String[] { "open ", "launch ", "start ", "play ", "pause ", "stop ", "mute ", "unmute ", "volume ", "call ", "dial ", "text ", "sms ", "message ", "send text ", "send message ", "navigate ", "directions " })) {
             return false;
         }
         if (JarvisProjectPackager.looksLikeProjectZipRequest(value)) {
@@ -2417,6 +2627,33 @@ public final class JarvisCommandCenter {
                 "hide the code snippet",
                 "delete code snippet",
                 "dismiss code snippet"
+        });
+    }
+
+    private static boolean isClearGeneratedImageCommand(String lower) {
+        if (lower == null) {
+            return false;
+        }
+        String value = lower.trim();
+        if (value.equals("clear image") || value.equals("clear generated image") || value.equals("hide image") || value.equals("remove image") || value.equals("delete image")) {
+            return true;
+        }
+        return containsAny(value, new String[] {
+                "clear the generated image",
+                "clear generated picture",
+                "remove generated image",
+                "remove the generated image",
+                "hide generated image",
+                "hide the generated image",
+                "delete generated image",
+                "delete the generated image",
+                "dismiss generated image",
+                "dismiss the generated image",
+                "clear image panel",
+                "clear picture panel",
+                "remove picture",
+                "hide picture",
+                "delete picture"
         });
     }
 

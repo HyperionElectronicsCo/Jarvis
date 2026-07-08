@@ -8,8 +8,8 @@ android {
         applicationId "com.hyperion.jarvis"
         minSdkVersion 21
         targetSdkVersion 28
-        versionCode 31
-        versionName "1.31"
+        versionCode 62
+        versionName "1.6.2"
     }
 
     buildTypes {
@@ -30,4 +30,8 @@ android {
 
 dependencies {
     implementation fileTree(dir: 'libs', include: ['*.jar'])
+    // v57: AIDE/AGP 3.5.4 compatible on-device OCR fallback.
+    // The newer com.google.mlkit artifacts can inject manifest directives that older AIDE/aapt cannot parse.
+    // This older Google Mobile Vision dependency gives Jarvis on-device OCR/barcode support without breaking AIDE compatibility.
+    implementation 'com.google.android.gms:play-services-vision:20.1.3'
 }
