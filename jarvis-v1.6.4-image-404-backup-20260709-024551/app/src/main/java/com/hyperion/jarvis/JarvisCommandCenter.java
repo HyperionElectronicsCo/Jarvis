@@ -1104,16 +1104,14 @@ private static String extractImageGenerationPrompt(String command, String lower)
     if (command == null) {
         return null;
     }
-    String original = removeAiImageRoutingPrefix(command.trim());
-    String value = original.toLowerCase(Locale.UK).trim();
+    String original = command.trim();
+    String value = lower == null ? original.toLowerCase(Locale.UK) : lower.trim();
     if (!isImageGenerationCommand(value)) {
         return null;
     }
     String[] prefixes = new String[] {
             "generate an image of ",
             "generate an image for ",
-            "generate me an image of ",
-            "generate me a picture of ",
             "generate image of ",
             "generate image for ",
             "generating an image of ",
@@ -1124,14 +1122,10 @@ private static String extractImageGenerationPrompt(String command, String lower)
             "give me a generated image of ",
             "create an image of ",
             "create an image for ",
-            "create me an image of ",
-            "create me a picture of ",
             "create image of ",
             "create image for ",
             "make an image of ",
             "make an image for ",
-            "make me an image of ",
-            "make me a picture of ",
             "make image of ",
             "make image for ",
             "draw an image of ",
@@ -1140,36 +1134,35 @@ private static String extractImageGenerationPrompt(String command, String lower)
             "render an image of ",
             "render image of ",
             "picture of ",
-            "photo of ",
             "image of "
     };
+    String trimmed = original;
+    String trimmedLower = value;
     for (int i = 0; i < prefixes.length; i++) {
         String prefix = prefixes[i];
-        if (value.startsWith(prefix)) {
-            String result = original.substring(prefix.length()).trim();
+        if (trimmedLower.startsWith(prefix)) {
+            String result = trimmed.substring(prefix.length()).trim();
             if (result.length() > 0) {
                 return result;
             }
         }
     }
-    if (value.startsWith("generate ") && value.indexOf(" image") >= 0) {
-        String result = original.substring("generate ".length()).trim();
-        String lowerResult = result.toLowerCase(Locale.UK);
-        if (lowerResult.startsWith("an image of ")) {
+    if (trimmedLower.startsWith("generate ") && trimmedLower.indexOf(" image") >= 0) {
+        String result = trimmed.substring("generate ".length()).trim();
+        if (result.toLowerCase(Locale.UK).startsWith("an image of ")) {
             return result.substring("an image of ".length()).trim();
         }
-        if (lowerResult.startsWith("image of ")) {
+        if (result.toLowerCase(Locale.UK).startsWith("image of ")) {
             return result.substring("image of ".length()).trim();
         }
         return result;
     }
-    if (value.startsWith("generating ") && value.indexOf(" image") >= 0) {
-        String result = original.substring("generating ".length()).trim();
-        String lowerResult = result.toLowerCase(Locale.UK);
-        if (lowerResult.startsWith("an image of ")) {
+    if (trimmedLower.startsWith("generating ") && trimmedLower.indexOf(" image") >= 0) {
+        String result = trimmed.substring("generating ".length()).trim();
+        if (result.toLowerCase(Locale.UK).startsWith("an image of ")) {
             return result.substring("an image of ".length()).trim();
         }
-        if (lowerResult.startsWith("image of ")) {
+        if (result.toLowerCase(Locale.UK).startsWith("image of ")) {
             return result.substring("image of ".length()).trim();
         }
         return result;
@@ -1177,84 +1170,29 @@ private static String extractImageGenerationPrompt(String command, String lower)
     return original;
 }
 
-public static String extractImageGenerationPromptForExternal(String command) {
-    if (command == null) {
-        return "";
-    }
-    String stripped = stripWakePhrase(command).trim();
-    if (stripped.length() == 0) {
-        return "";
-    }
-    String normalized = normalizeSpokenCommandText(stripped).trim();
-    String prompt = extractImageGenerationPrompt(normalized, normalized.toLowerCase(Locale.UK));
-    return prompt == null ? "" : prompt.trim();
-}
-
-private static String removeAiImageRoutingPrefix(String command) {
-    if (command == null) {
-        return "";
-    }
-    String result = command.trim();
-    boolean changed = true;
-    while (changed) {
-        changed = false;
-        String lower = result.toLowerCase(Locale.UK);
-        String[] prefixes = new String[] {
-                "ask ai to ",
-                "ask ai ",
-                "ask chatgpt to ",
-                "ask chatgpt ",
-                "ask openai to ",
-                "ask openai ",
-                "use ai to ",
-                "use openai to ",
-                "ai please ",
-                "ai ",
-                "chatgpt ",
-                "openai "
-        };
-        for (int i = 0; i < prefixes.length; i++) {
-            if (lower.startsWith(prefixes[i])) {
-                result = result.substring(prefixes[i].length()).trim();
-                changed = true;
-                break;
-            }
-        }
-    }
-    return result;
-}
-
 private static boolean isImageGenerationCommand(String lower) {
     if (lower == null || lower.length() == 0) {
         return false;
     }
-    String value = removeAiImageRoutingPrefix(lower).toLowerCase(Locale.UK).trim();
-    return value.startsWith("generate an image")
-            || value.startsWith("generate me an image")
-            || value.startsWith("generate me a picture")
-            || value.startsWith("generate image")
-            || value.startsWith("generating an image")
-            || value.startsWith("generating image")
-            || value.startsWith("generated image")
-            || value.startsWith("ai generated image")
-            || value.startsWith("a generated image")
-            || value.startsWith("give me a generated image")
-            || value.startsWith("create an image")
-            || value.startsWith("create me an image")
-            || value.startsWith("create me a picture")
-            || value.startsWith("create image")
-            || value.startsWith("make an image")
-            || value.startsWith("make me an image")
-            || value.startsWith("make me a picture")
-            || value.startsWith("make image")
-            || value.startsWith("draw me ")
-            || value.startsWith("draw an image")
-            || value.startsWith("draw image")
-            || value.startsWith("render an image")
-            || value.startsWith("render image")
-            || value.startsWith("picture of ")
-            || value.startsWith("photo of ")
-            || value.startsWith("image of ");
+    return lower.startsWith("generate an image")
+            || lower.startsWith("generate image")
+            || lower.startsWith("generating an image")
+            || lower.startsWith("generating image")
+            || lower.startsWith("generated image")
+            || lower.startsWith("ai generated image")
+            || lower.startsWith("a generated image")
+            || lower.startsWith("give me a generated image")
+            || lower.startsWith("create an image")
+            || lower.startsWith("create image")
+            || lower.startsWith("make an image")
+            || lower.startsWith("make image")
+            || lower.startsWith("draw me ")
+            || lower.startsWith("draw an image")
+            || lower.startsWith("draw image")
+            || lower.startsWith("render an image")
+            || lower.startsWith("render image")
+            || lower.startsWith("picture of ")
+            || lower.startsWith("image of ");
 }
 
     private static void startAIRequest(Context context, String command, String lower, JarvisOutput output) {

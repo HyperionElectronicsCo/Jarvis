@@ -974,3 +974,11 @@ Examples:
 - `discard`
 
 Jarvis now prepares the SMS, reads/displays the message back, then only sends it after confirmation. It uses Android `SEND_SMS` permission and keeps the learned contact ranking from calls/texts.
+
+
+## v1.6.3 Image Display Recovery
+
+- Restores the generated-image panel when an AI/free fallback returns a remote image URL or Markdown image link.
+- Downloads remote image URLs into Jarvis local cache before displaying them.
+- Stops raw image URLs being shown/read out as the main response.
+- Adds support for phrases like `generating image of ...` and `give me a generated image of ...`.

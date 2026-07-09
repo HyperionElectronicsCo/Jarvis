@@ -8,8 +8,8 @@ android {
         applicationId "com.hyperion.jarvis"
         minSdkVersion 21
         targetSdkVersion 28
-        versionCode 64
-        versionName "1.6.4"
+        versionCode 63
+        versionName "1.6.3"
     }
 
     buildTypes {

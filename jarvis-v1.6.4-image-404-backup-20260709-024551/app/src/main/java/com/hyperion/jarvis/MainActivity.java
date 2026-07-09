@@ -85,7 +85,6 @@ public class MainActivity extends Activity implements View.OnClickListener, Text
     private byte[] pendingGeneratedImageBytes;
     private String pendingGeneratedImageMimeType;
     private String pendingGeneratedImageName;
-    private boolean nativeImageFallbackRunning;
 
     private SpeechRecognizer speechRecognizer;
     private Intent recognizerIntent;
@@ -1259,7 +1258,6 @@ private String saveGeneratedImageToUri(Uri uri) {
 }
 
 public void onImageGenerated(final byte[] imageBytes, final String mimeType, final String suggestedFileName) {
-    nativeImageFallbackRunning = false;
     runOnUiThread(new Runnable() {
         public void run() {
             showGeneratedImage(imageBytes, mimeType, suggestedFileName, true);
@@ -1579,93 +1577,6 @@ public void onImageGenerated(final byte[] imageBytes, final String mimeType, fin
         return cleaned + ".png";
     }
 
-    private boolean maybeStartNativeImageGenerationFromAiText(String text) {
-        String lower = text == null ? "" : text.toLowerCase(Locale.UK);
-        if (nativeImageFallbackRunning) {
-            if (lower.indexOf("image generation failed") >= 0
-                    || lower.indexOf("could not display") >= 0
-                    || lower.indexOf("failed after trying") >= 0) {
-                nativeImageFallbackRunning = false;
-            }
-            return false;
-        }
-        String prompt = getLastImageGenerationPrompt();
-        if (prompt.length() == 0) {
-            return false;
-        }
-        boolean looksLikeImagePromise = lower.indexOf("dall") >= 0
-                || lower.indexOf("image generation") >= 0
-                || lower.indexOf("generated image") >= 0
-                || lower.indexOf("fresh image") >= 0
-                || lower.indexOf("create a fresh image") >= 0
-                || lower.indexOf("generate a fresh image") >= 0;
-        if (!looksLikeImagePromise) {
-            return false;
-        }
-        hideCodeSnippet();
-        appendConsole("IMAGE: AI text response routed to Jarvis native image generator.");
-        if (transcriptView != null) {
-            transcriptView.setText("Generating image directly now: " + prompt);
-        }
-        nativeImageFallbackRunning = true;
-        JarvisOnlineBrain.requestImageGeneration(this, prompt, this);
-        return true;
-    }
-
-    private String getLastImageGenerationPrompt() {
-        String lastRequest = JarvisConversationMemory.getLastUserRequest(this);
-        String prompt = JarvisCommandCenter.extractImageGenerationPromptForExternal(lastRequest);
-        if (prompt == null) {
-            prompt = "";
-        }
-        prompt = prompt.trim();
-        if (prompt.length() > 0) {
-            return prompt;
-        }
-        String lower = lastRequest == null ? "" : lastRequest.toLowerCase(Locale.UK);
-        if (lower.indexOf("image") < 0 && lower.indexOf("picture") < 0 && lower.indexOf("photo") < 0 && lower.indexOf("draw") < 0 && lower.indexOf("render") < 0) {
-            return "";
-        }
-        String cleaned = lastRequest == null ? "" : JarvisCommandCenter.stripWakePhrase(lastRequest).trim();
-        String[] prefixes = new String[] {
-                "ask ai to ", "ask ai ", "ask chatgpt to ", "ask chatgpt ", "ai please ", "ai ", "chatgpt ",
-                "generate an image of ", "generate image of ", "create an image of ", "create image of ",
-                "make an image of ", "make image of ", "draw me ", "draw an image of ", "render an image of ",
-                "give me a generated image of ", "image of ", "picture of ", "photo of "
-        };
-        boolean changed = true;
-        while (changed) {
-            changed = false;
-            lower = cleaned.toLowerCase(Locale.UK);
-            for (int i = 0; i < prefixes.length; i++) {
-                if (lower.startsWith(prefixes[i])) {
-                    cleaned = cleaned.substring(prefixes[i].length()).trim();
-                    changed = true;
-                    break;
-                }
-            }
-        }
-        return cleaned.trim();
-    }
-
-    private boolean startNativeImageFallbackAfterRemoteFailure(String errorMessage) {
-        if (nativeImageFallbackRunning) {
-            return false;
-        }
-        String prompt = getLastImageGenerationPrompt();
-        if (prompt.length() == 0) {
-            return false;
-        }
-        nativeImageFallbackRunning = true;
-        appendConsole("IMAGE: Remote image link failed; using native generator fallback. " + (errorMessage == null ? "" : errorMessage));
-        if (transcriptView != null) {
-            transcriptView.setText("Remote image link expired. Generating directly now: " + prompt);
-        }
-        speak("The image link expired, so I am generating it directly now.");
-        JarvisOnlineBrain.requestImageGeneration(this, prompt, this);
-        return true;
-    }
-
     private void downloadAndShowRemoteImage(final String imageUrl, final String suggestedName) {
         appendConsole("IMAGE: Downloading generated image for display.");
         new AsyncTask<Void, Void, byte[]>() {
@@ -1679,12 +1590,9 @@ public void onImageGenerated(final byte[] imageBytes, final String mimeType, fin
                 try {
                     URL url = new URL(imageUrl);
                     connection = (HttpURLConnection) url.openConnection();
-                    connection.setInstanceFollowRedirects(true);
-                    connection.setConnectTimeout(18000);
-                    connection.setReadTimeout(30000);
-                    connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android; Jarvis) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36");
-                    connection.setRequestProperty("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8");
-                    connection.setRequestProperty("Cache-Control", "no-cache");
+                    connection.setConnectTimeout(15000);
+                    connection.setReadTimeout(25000);
+                    connection.setRequestProperty("User-Agent", "Mozilla/5.0 JarvisAndroid");
                     connection.connect();
                     int code = connection.getResponseCode();
                     if (code < 200 || code >= 300) {
@@ -1735,10 +1643,8 @@ public void onImageGenerated(final byte[] imageBytes, final String mimeType, fin
 
             protected void onPostExecute(byte[] data) {
                 if (data != null && data.length > 0) {
-                    nativeImageFallbackRunning = false;
                     showGeneratedImage(data, mimeType, suggestedName, true);
-                } else if (!startNativeImageFallbackAfterRemoteFailure(errorMessage)) {
-                    nativeImageFallbackRunning = false;
+                } else {
                     speak(errorMessage == null || errorMessage.length() == 0 ? "I could not display the generated image." : errorMessage);
                 }
             }
@@ -1752,9 +1658,6 @@ public void onImageGenerated(final byte[] imageBytes, final String mimeType, fin
                     if (JarvisProjectPackager.containsProjectPackage(text)) {
                         handleProjectPackageAnswer(text);
                         speak("I prepared the project package. Choose Save ZIP to pick where to save it, or Not Now to keep it for later.");
-                        return;
-                    }
-                    if (maybeStartNativeImageGenerationFromAiText(text)) {
                         return;
                     }
                     String imageUrl = extractRemoteImageUrl(text);
